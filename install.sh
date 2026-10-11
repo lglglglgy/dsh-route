@@ -8,7 +8,9 @@
 #   ./install.sh --system              装成 systemd 系统服务（需要 sudo）
 #   ./install.sh --prefix DIR          代码目录（默认 ~/.local/share/dsh-route）
 #   ./install.sh --bin-dir DIR         客户端目录（默认 ~/bin）
-#   ./install.sh --config-dir DIR       配置目录（默认 ~/.config/dsh-route）
+#   ./install.sh --config-dir DIR      配置目录（默认 ~/.config/dsh-route）
+#   ./install.sh --host-alias NAME     访问别名，默认 dsh.local（幂等写进 /etc/hosts，卸载时移除）
+#   ./install.sh --no-host-alias       不碰 /etc/hosts
 #   ./install.sh --uninstall            卸载（保留配置与历史）
 #   ./install.sh --uninstall --purge    连配置、余额历史一起删除
 #   ./install.sh --dry-run --uninstall  只打印会删什么
@@ -27,6 +29,9 @@ UNIT_DIR_DEFAULT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 LOGDIR="$HOME/Library/Logs"
 STATE_DIR="${DSH_ROUTE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/dsh-route}"
+HOST_ALIAS="${DSH_ROUTE_HOST_ALIAS:-dsh.local}"     # 访问别名；置空表示不改 hosts
+HOSTS_FILE="${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"    # 测试可覆盖
+HOSTS_MARK="# dsh-route"
 SVC=dsh-route
 LABEL=com.dshroute.agent
 SYSTEM_UNIT_DIR=/etc/systemd/system
@@ -41,6 +46,8 @@ while [ $# -gt 0 ]; do
     --prefix)       PREFIX="$2"; shift 2 ;;
     --bin-dir)      BIN_DIR="$2"; shift 2 ;;
     --config-dir)   CONFIG_DIR="$2"; shift 2 ;;
+    --host-alias)   HOST_ALIAS="$2"; shift 2 ;;
+    --no-host-alias) HOST_ALIAS=""; shift ;;
     --service-kind) SERVICE_KIND="$2"; shift 2 ;;
     --system)       SERVICE_KIND=systemd-system; shift ;;
     --no-service)   NO_SERVICE=1; shift ;;
@@ -48,7 +55,7 @@ while [ $# -gt 0 ]; do
     --uninstall)    UNINSTALL=1; shift ;;
     --purge)        PURGE=1; shift ;;
     -h|--help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "未知参数：$1（-h 看用法）" >&2; exit 2 ;;
   esac
@@ -283,7 +290,8 @@ step "安装代码到 ${PREFIX}（版本 ${VERSION}）"
 run mkdir -p "$PREFIX/assets" "$CONFIG_DIR" "$BIN_DIR"
 run install -m 755 "$SELF_DIR/src/daemon.py" "$PREFIX/daemon.py"
 run install -m 644 "$SELF_DIR/src/ui.html"   "$PREFIX/ui.html"
-for f in "$SELF_DIR"/src/assets/*.woff2; do
+for f in "$SELF_DIR"/src/assets/*; do
+  [ -f "$f" ] || continue
   run install -m 644 "$f" "$PREFIX/assets/$(basename "$f")"
 done
 run install -m 644 "$SELF_DIR/VERSION" "$PREFIX/VERSION"
@@ -372,6 +380,46 @@ EOF
 install_service
 if [ "$DRY" = 0 ]; then printf '%s\n' "$SERVICE_KIND" > "$PREFIX/.service-kind"; fi
 
+# ── 访问别名：写 /etc/hosts，让地址变成 http://dsh.local:3090/ ──
+HOSTS_APPLIED=0
+apply_host_alias() {
+  if [ -z "$HOST_ALIAS" ]; then
+    say "按 --no-host-alias 跳过 /etc/hosts"
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then
+    say "[dry-run] 在 $HOSTS_FILE 写入「127.0.0.1 $HOST_ALIAS」（带 $HOSTS_MARK 标记，卸载时移除）"
+    return 0
+  fi
+  if [ ! -f "$HOSTS_FILE" ]; then
+    warn "找不到 $HOSTS_FILE，跳过别名"
+    return 0
+  fi
+  tmp="$(mktemp)"
+  grep -v "$HOSTS_MARK" "$HOSTS_FILE" > "$tmp" 2>/dev/null || cp "$HOSTS_FILE" "$tmp" 2>/dev/null || : > "$tmp"
+  printf '127.0.0.1\t%s\t%s\n::1\t%s\t%s\n' "$HOST_ALIAS" "$HOSTS_MARK" "$HOST_ALIAS" "$HOSTS_MARK" >> "$tmp"
+  if [ -w "$HOSTS_FILE" ]; then
+    cat "$tmp" > "$HOSTS_FILE"
+  elif sudo -n true 2>/dev/null; then
+    sudo cp "$tmp" "$HOSTS_FILE"
+  else
+    rm -f "$tmp"
+    say "没改 $HOSTS_FILE（需要 sudo）。想用 http://$HOST_ALIAS:${CTL:-3090}/ 可以二选一："
+    say "    dsh-route host-alias            # 会提示输入密码"
+    say "    echo '127.0.0.1 $HOST_ALIAS' | sudo tee -a $HOSTS_FILE"
+    if is_wsl; then
+      say "  提示：WSL 的 /etc/hosts 每次启动会重建，建议加到 Windows 那份（Windows 浏览器也能用）："
+      say "    C:\\Windows\\System32\\drivers\\etc\\hosts  里加一行：127.0.0.1 $HOST_ALIAS"
+    fi
+    return 0
+  fi
+  rm -f "$tmp"
+  HOSTS_APPLIED=1
+  say "访问别名已写入 $HOSTS_FILE：$HOST_ALIAS（带 $HOSTS_MARK 标记，卸载时移除）"
+}
+step "访问别名（/etc/hosts）"
+apply_host_alias
+
 # ── 安装清单：卸载器靠它精确删除（用户不需要记任何路径）────────
 case "$SERVICE_KIND" in
   systemd|systemd-system) UNIT_PATH="$UNIT_DIR/$SVC.service" ;;
@@ -398,6 +446,9 @@ if [ "$DRY" = 0 ]; then
     printf 'runtime_dir=%s\n'  "${XDG_RUNTIME_DIR:-/tmp}/dsh-route"
     printf 'log_file=%s\n'     "$LOG_PATH"
     printf 'crontab_line=%s\n' "$CRON_LINE"
+    printf 'host_alias=%s\n'   "$HOST_ALIAS"
+    printf 'hosts_file=%s\n'   "$HOSTS_FILE"
+    printf 'hosts_applied=%s\n' "$HOSTS_APPLIED"
     printf 'files=daemon.py ui.html assets/ VERSION README.md\n'
   } > "$PREFIX/MANIFEST"
 fi
@@ -467,5 +518,11 @@ esac
 step "完成"
 say "服务托管：$(service_desc)"
 say "命令行：dsh-route / dsh-route url <host> / dsh-route key"
-say "控制页：用 127.0.0.1 打开（远端信任栅栏按 Host 判定）"
+if [ -n "$HOST_ALIAS" ] && [ "$HOSTS_APPLIED" = 1 ]; then
+  say "控制页：http://$HOST_ALIAS:${CTL:-3090}/    （也支持 http://localhost:${CTL:-3090}/）"
+else
+  say "控制页：http://localhost:${CTL:-3090}/    （或 http://127.0.0.1:${CTL:-3090}/）"
+  [ -n "$HOST_ALIAS" ] && say "  想用 http://$HOST_ALIAS:${CTL:-3090}/：dsh-route host-alias"
+fi
+say "注意：点进某台机器的 dsh web 时用 127.0.0.1（远端信任栅栏按 Host 判定）"
 say "升级：再跑一次本脚本即可（配置与余额历史不会被动）"

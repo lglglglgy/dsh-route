@@ -1,5 +1,21 @@
 # 变更记录
 
+## 0.1.3
+
+- **访问地址不再是"127.0.0.1:3090"这一种**：
+  - 控制页**同时监听 127.0.0.1 与 ::1**，所以 `http://localhost:3090/` 在把 localhost 解析成 IPv6 的
+    系统上也能开（以前只监听 IPv4 时可能打不开）；
+  - 新增访问别名 `HOST_ALIAS`（默认 `dsh.local`）：安装时写进 `/etc/hosts`（带 `# dsh-route` 标记，
+    **卸载时自动移除**），之后用 `http://dsh.local:3090/` 打开；没有免密 sudo 时会打印一行命令，
+    也可以随时跑 `dsh-route host-alias`（会提示输密码），`dsh-route host-alias --remove` 移除；
+  - `dsh-route status / open / where` 与页面底部都显示当前可用的访问地址，并提示别名是否已生效。
+  - WSL 提示：WSL 的 `/etc/hosts` 每次启动会重建，建议把别名加进 Windows 的 hosts 文件
+    （`C:\Windows\System32\drivers\etc\hosts`），这样 Windows 浏览器也能直接访问。
+- **标签页图标**：新增自带矢量图标（渐变圆角方块 + "多路汇入"示意）`favicon.svg` / `favicon-32.png` /
+  `favicon.ico` 和 `apple-touch-icon.png`（固定标签页/加桌面），并给 `/favicon.ico` 与
+  `/apple-touch-icon.png` 加了路由——不再显示浏览器默认的地球；安装脚本现在会把 `src/assets/` 下
+  所有资源都装进去（以前只装 `*.woff2`）。
+
 ## 0.1.2
 
 - **不再要求本机 Python 3.14**：会话解析改成两级兜底。优先让**远端**解压

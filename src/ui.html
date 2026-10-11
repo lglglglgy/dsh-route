@@ -3,6 +3,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DSH WEB ROUTE</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#7b61ff">
 <style>
 /* 自带的圆润字体（Nunito 正文 / Quicksand 标题），从 /assets/ 本地提供 */
 @font-face{font-family:"DSH Display";src:url("/assets/quicksand-500.woff2") format("woff2");font-weight:500;font-display:swap}
@@ -365,7 +370,7 @@ code{font-family:var(--font-mono);font-size:11.5px;background:rgba(0,0,0,.4);bor
   </section>
 
   <div class="foot">
-    <span>dsh-route · 仅监听 127.0.0.1 · 请用 127.0.0.1 打开（远端信任栅栏按 Host 判定）</span>
+    <span>dsh-route · 仅监听本机回环 · 转发到远端 dsh web 时用 127.0.0.1（远端信任栅栏按 Host 判定）</span>
     <span id="foot-meta">—</span>
   </div>
 </div>

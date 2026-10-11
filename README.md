@@ -137,16 +137,36 @@ __DSH_ROUTE_PAYLOAD_BELOW__      ← 标记行
 ## 使用
 
 ```bash
-dsh-route                  # 当前连接与转发状态
+dsh-route                  # 当前连接与转发状态（含访问地址）
 dsh-route url h100         # 打印某台可直接打开的 URL（带 token）
 dsh-route open             # 控制页地址
+dsh-route host-alias       # 把 dsh.local 写进 /etc/hosts，之后用域名访问
 dsh-route key              # 录入 DeepSeek API key（余额面板用，不回显）
-dsh-route where            # 代码/配置路径、端口配置、服务状态
+dsh-route where            # 访问地址、别名状态、路径与端口配置
 dsh-route restart|log      # 服务控制
+dsh-route uninstall        # 卸载
 ```
 
-浏览器打开 **http://127.0.0.1:3090/** —— 请用 `127.0.0.1` 而非 `localhost`：dsh web 的信任栅栏按
-Host 判定。页面上：左栏是当前连接的机器与转发端口，右栏是该机器最近会话；下面是余额、余额走势、
+### 访问地址
+
+控制页同时监听 `127.0.0.1` 和 `::1`，所以下面几种都能开：
+
+| 地址 | 说明 |
+| --- | --- |
+| `http://localhost:3090/` | 默认，所有系统都能用（双栈监听，`localhost` 解析成 IPv4 或 IPv6 都行） |
+| `http://dsh.local:3090/` | 需要 `/etc/hosts` 别名：安装时若没有免密 sudo 会打印一行命令，或随时 `dsh-route host-alias` |
+| `http://127.0.0.1:3090/` | 一直可用 |
+
+别名用的是 `HOST_ALIAS`（默认 `dsh.local`），写进 hosts 时带 `# dsh-route` 标记，**卸载时会自动移除**。
+
+> 只有"点进某台机器的 dsh web"那一步必须用 `127.0.0.1`（远端的信任栅栏按 Host 判定）；
+> 控制页本身用哪个地址都可以。WSL 里 `/etc/hosts` 每次启动会重建，建议把别名加到
+> Windows 的 `C:\Windows\System32\drivers\etc\hosts`，这样 Windows 浏览器也能直接用。
+
+图标是自带的矢量图（渐变圆角方块 + 多路汇入），标签页不再显示默认地球；
+`apple-touch-icon.png` 供"固定标签页 / 加到桌面"使用。
+
+页面上：左栏是当前连接的机器与转发端口，右栏是该机器最近会话；下面是余额、余额走势、
 近期使用、API 状态。右上角齿轮可录入 API key。
 
 ## 卸载

@@ -107,6 +107,7 @@ def local_zstd_decompress(data: bytes) -> bytes | None:
     return None
 
 HOME = Path.home()
+HOSTS_FILE = Path(os.environ.get("DSH_ROUTE_HOSTS_FILE") or "/etc/hosts")   # 测试可覆盖
 RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "dsh-route"
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = Path(os.environ.get("DSH_ROUTE_CONFIG") or (HOME / ".config/dsh-route/config"))
@@ -137,6 +138,7 @@ DEFAULTS: dict[str, object] = {
     "API_BASE": "https://api.deepseek.com",
     "STATUS_URL": "https://status.deepseek.com/",
     "PROXY": "",                # 形如 http://127.0.0.1:7890；本机直连受限时可用
+    "HOST_ALIAS": "dsh.local",  # 好记的访问别名（安装时可写进 /etc/hosts）；留空则只用 localhost
 }
 
 SSH_OPTS = [
@@ -1334,8 +1336,32 @@ def render_index() -> str:
                 .replace("__BASE__", str(int(CONFIG["BASE_PORT"]))))
 
 
+class V6Server(ThreadingHTTPServer):
+    """只监听 ::1 的 IPv6 回环（避免和 127.0.0.1 抢同一端口）。"""
+    address_family = socket.AF_INET6
+
+    def server_bind(self) -> None:
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        except OSError:
+            pass
+        super().server_bind()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "dsh-route/5.0"
+
+    def _send_static(self, target: Path) -> None:
+        ctype = {".woff2": "font/woff2", ".woff": "font/woff", ".css": "text/css",
+                 ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}.get(
+                    target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("content-type", ctype)
+        self.send_header("cache-control", "public, max-age=604800")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
@@ -1350,20 +1376,21 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/", "/index.html"):
             self._send(200, render_index().encode(), "text/html; charset=utf-8")
             return
+        # 浏览器默认会来要 /favicon.ico；apple-touch-icon 给"固定标签页/加到桌面"用
+        if parsed.path in ("/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"):
+            target = ASSETS_DIR / os.path.basename(parsed.path)
+            if parsed.path.startswith("/apple-touch-icon") and not target.is_file():
+                target = ASSETS_DIR / "apple-touch-icon.png"
+            if target.is_file():
+                self._send_static(target)
+                return
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+            return
         if parsed.path.startswith("/assets/"):
             name = os.path.basename(parsed.path)
             target = ASSETS_DIR / name
             if name and target.is_file():
-                ctype = {".woff2": "font/woff2", ".woff": "font/woff", ".css": "text/css",
-                         ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}.get(
-                            target.suffix, "application/octet-stream")
-                body = target.read_bytes()
-                self.send_response(200)
-                self.send_header("content-type", ctype)
-                self.send_header("cache-control", "public, max-age=604800")
-                self.send_header("content-length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_static(target)
                 return
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
@@ -1374,7 +1401,8 @@ class Handler(BaseHTTPRequestHandler):
                            "candidate_ports": candidate_ports(CONFIG),
                            "control_port": int(CONFIG["CONTROL_PORT"]),
                            "ps_path": STATE.ps_path, "platform": PLATFORM,
-                           "probe": STATE.last_probe, "rows": STATE.rows}
+                           "probe": STATE.last_probe, "rows": STATE.rows,
+                           **friendly_url()}
             self._send(200, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
         if parsed.path == "/api/metrics":
@@ -1420,6 +1448,36 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def host_alias() -> str:
+    """好记的访问别名，例如 dsh.local（安装时可写进 /etc/hosts）。"""
+    return str(CONFIG.get("HOST_ALIAS") or "").strip()
+
+
+def alias_in_hosts(alias: str) -> bool:
+    if not alias:
+        return False
+    try:
+        for line in HOSTS_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split("#", 1)[0].split()
+            if len(parts) >= 2 and alias in parts[1:]:
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def friendly_url() -> dict:
+    """给界面/命令行用的访问地址：优先 hosts 别名，其次 localhost（双栈已监听）。"""
+    port = int(CONFIG["CONTROL_PORT"])
+    alias = host_alias()
+    local = "http://localhost:%d/" % port
+    if alias and alias_in_hosts(alias):
+        return {"url": "http://%s:%d/" % (alias, port), "url_local": local,
+                "host_alias": alias, "alias_ok": True}
+    return {"url": local, "url_local": local, "url_ip": "http://127.0.0.1:%d/" % port,
+            "host_alias": alias, "alias_ok": False}
+
+
 def main() -> int:
     try:                                     # 清掉历史"主口"记录
         (RUN_DIR / "selected").unlink()
@@ -1430,7 +1488,17 @@ def main() -> int:
         f"API key {'已配置' if api_key() else '未配置'}")
     threading.Thread(target=scan_loop, daemon=True).start()
     threading.Thread(target=metrics_loop, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", int(CONFIG["CONTROL_PORT"])), Handler)
+    port = int(CONFIG["CONTROL_PORT"])
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    # 顺便监听 ::1：有些系统把 localhost 解析成 IPv6，这样 http://localhost:3090/ 也能打开
+    try:
+        v6 = V6Server(("::1", port), Handler)
+        threading.Thread(target=v6.serve_forever, daemon=True).start()
+    except OSError as exc:
+        log(f"IPv6 回环监听跳过（不影响 127.0.0.1）：{exc}")
+    info = friendly_url()
+    log(f"访问地址：{info['url']}"
+        + ("" if info["alias_ok"] else f"（未配置 hosts 别名；127.0.0.1:{port} 一直可用）"))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

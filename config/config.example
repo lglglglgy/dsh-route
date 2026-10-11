@@ -14,7 +14,9 @@ TOKEN_TTL=90                  # dsh web token 复验间隔（秒）
 # EXTRA_EXCLUDE="a b"         # 忽略这些 ssh 目标
 
 # ── 控制页 / 指标 ───────────────────────────────────────────
-CONTROL_PORT=3090             # 控制页与 API（只监听 127.0.0.1）
+CONTROL_PORT=3090             # 控制页与 API（只监听本机回环；127.0.0.1 与 ::1 都监听）
+HOST_ALIAS=dsh.local          # 访问别名：安装时写进 /etc/hosts（带 # dsh-route 标记，卸载时移除），
+                              # 之后用 http://dsh.local:3090/ 打开；置空则只用 http://localhost:3090/
 METRICS_POLL=30               # 余额/状态/用量刷新间隔（秒）
 USAGE_DAYS=7                  # "近期使用"统计天数
 

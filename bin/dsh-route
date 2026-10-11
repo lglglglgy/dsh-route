@@ -9,6 +9,8 @@
 #   dsh-route key-show        看当前 key 概况（只显示前 6 位）
 #   dsh-route key-clear       清除 API key
 #   dsh-route where           看平台、服务类型、路径与端口配置
+#   dsh-route host-alias [NAME]   把 NAME（默认 dsh.local）写进 /etc/hosts，之后用域名访问
+#   dsh-route host-alias --remove 移除 hosts 里的别名
 #   dsh-route start|stop|restart|enable|disable|log|status   服务控制
 #   dsh-route uninstall [--purge]   卸载（读安装清单，精确删除；--purge 连配置与历史）
 set -uo pipefail
@@ -154,11 +156,13 @@ import json, sys, platform
 d = json.load(open(sys.argv[1]))
 rows = d.get("rows") or []
 pr = d.get("probe") or {}
-print("平台 %s（本地发现：%s，%d 个 ssh 进程%s）  控制页 http://127.0.0.1:%d/"
+print("平台 %s（本地发现：%s，%d 个 ssh 进程%s）  访问 %s"
       % (pr.get("platform") or platform.system().lower(),
          pr.get("local") or "-", pr.get("local_count") or 0,
          ("，Windows 侧：" + pr["windows"]) if pr.get("windows") else "",
-         d["control_port"]))
+         d.get("url") or ("http://127.0.0.1:%d/" % d["control_port"])))
+if not d.get("alias_ok", True) and d.get("host_alias"):
+    print("（别名 %s 还没写进 hosts，可以跑：dsh-route host-alias）" % d["host_alias"])
 print("本地端口从 %d 起    候选远端端口 %s    会话解压：%s"
       % (d["base_port"], ",".join(str(p) for p in d.get("candidate_ports") or []),
          pr.get("zstd") or "远端"))
@@ -207,9 +211,54 @@ PY
   rm -f "$tmp"
 }
 
+# ── 访问别名（/etc/hosts）────────────────────────────────────
+alias_name() {
+  local v=""
+  if [[ -f $CONFIG ]]; then
+    v=$(awk -F= '/^[[:space:]]*HOST_ALIAS/{sub(/#.*/, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' "$CONFIG")
+  fi
+  printf '%s' "${v:-dsh.local}"
+}
+hosts_file() { printf '%s' "${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"; }
+
+host_alias_cmd() {
+  local mode="${1:-add}" name="${2:-}" hf tmp
+  [[ $mode == remove ]] || name="${name:-$(alias_name)}"
+  [[ $mode == remove ]] || [[ -n $name ]] || die "别名不能为空"
+  hf=$(hosts_file)
+  [[ -f $hf ]] || die "找不到 $hf"
+  tmp=$(mktemp)
+  grep -vF '# dsh-route' "$hf" > "$tmp" 2>/dev/null || cp "$hf" "$tmp" 2>/dev/null || : > "$tmp"
+  if [[ $mode == remove ]]; then
+    printf '  将从 %s 移除 # dsh-route 标记行\n' "$hf"
+  else
+    printf '127.0.0.1\t%s\t# dsh-route\n::1\t%s\t# dsh-route\n' "$name" "$name" >> "$tmp"
+    printf '  将把 %s 指向 127.0.0.1（%s）\n' "$name" "$hf"
+  fi
+  if [[ -w $hf ]]; then
+    cat "$tmp" > "$hf"
+  else
+    sudo cp "$tmp" "$hf" || { rm -f "$tmp"; die "写入 $hf 失败（需要 sudo）"; }
+  fi
+  rm -f "$tmp"
+  if [[ $mode == remove ]]; then
+    echo "已移除访问别名"
+  else
+    echo "已生效：http://$name:${CTL}/"
+  fi
+}
+
 case "${1:-status}" in
   status | scan | "") show_status ;;
-  open) require_service; echo "http://127.0.0.1:$CTL/" ;;
+  open)
+    require_service
+    tmp=$(dump_status) || die "服务无响应"
+    url=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("url") or "")' "$tmp" 2>/dev/null)
+    rm -f "$tmp"
+    echo "${url:-http://localhost:$CTL/}" ;;
+  host-alias)
+    if [[ ${2:-} == --remove || ${2:-} == remove ]]; then host_alias_cmd remove
+    else host_alias_cmd add "${2:-}"; fi ;;
   url) get_url "${2:-}" ;;
   select)
     die "主口功能已移除：每台机器都独立转发，直接用 dsh-route url <host> 或打开控制页点进去" ;;
@@ -232,10 +281,11 @@ case "${1:-status}" in
       echo "未配置（dsh-route key 可录入）"
     fi ;;
   where)
-    printf '平台: %s\n服务: %s（%s）\n代码: %s\n配置: %s\nkey : %s\n控制页: http://127.0.0.1:%s/\n' \
+    printf '平台: %s\n服务: %s（%s）\n访问: http://localhost:%s/\n别名: %s（%s）\n代码: %s\n配置: %s\nkey : %s\n' \
       "$(uname -s)$(grep -qi microsoft /proc/version 2>/dev/null && echo '（WSL）')" \
-      "$KIND" "$(service_active && echo 运行中 || echo 未运行)" \
-      "$DATA" "$CONFIG" "$KEY_FILE" "$CTL"
+      "$KIND" "$(service_active && echo 运行中 || echo 未运行)" "$CTL" \
+      "$(alias_name)" "$(grep -qF "$(alias_name)" "$(hosts_file)" 2>/dev/null && echo '已写进 hosts' || echo '未写，可跑 dsh-route host-alias')" \
+      "$DATA" "$CONFIG" "$KEY_FILE"
     [[ -f $CONFIG ]] && grep -E '^[A-Z_]+=' "$CONFIG" | sed 's/^/    /' ;;
   start) svc_start && echo "已启动（${KIND}）" ;;
   stop) svc_stop && echo "已停止（${KIND}）" ;;

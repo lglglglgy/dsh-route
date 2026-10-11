@@ -56,6 +56,9 @@ if [ -f "$MANIFEST" ]; then
       runtime_dir)   RUNTIME_DIR="$v" ;;
       log_file)      LOG_FILE="$v" ;;
       crontab_line)  CRONTAB_LINE="$v" ;;
+      host_alias)    HOST_ALIAS="$v" ;;
+      hosts_file)    HOSTS_FILE="$v" ;;
+      hosts_applied) HOSTS_APPLIED="$v" ;;
       *) ;;
     esac
   done < "$MANIFEST"
@@ -151,6 +154,28 @@ step "删除安装过的文件"
 for p in "$UNIT_FILE" "${RUNTIME_DIR}" "${LOG_FILE}"; do
   [ -n "${p:-}" ] && safe_rm "$p"
 done
+# 安装时写进 /etc/hosts 的访问别名（只删自己带标记的那两行）
+if [ "${HOSTS_APPLIED:-0}" = 1 ] && [ -n "${HOST_ALIAS:-}" ]; then
+  hf="${HOSTS_FILE:-/etc/hosts}"
+  if [ -f "$hf" ] && grep -qF "$HOST_ALIAS" "$hf" 2>/dev/null; then
+    if [ "$DRY" = 1 ]; then
+      say "[dry-run] 从 $hf 移除 $HOST_ALIAS"
+    else
+      htmp="$(mktemp)"
+      grep -vF "# dsh-route" "$hf" > "$htmp" 2>/dev/null || cp "$hf" "$htmp" 2>/dev/null || : > "$htmp"
+      if [ -w "$hf" ]; then
+        cat "$htmp" > "$hf"; rm -f "$htmp"
+        say "已从 $hf 移除访问别名 $HOST_ALIAS"
+      elif sudo -n true 2>/dev/null; then
+        sudo cp "$htmp" "$hf"; rm -f "$htmp"
+        say "已从 $hf 移除访问别名 $HOST_ALIAS"
+      else
+        rm -f "$htmp"
+        warn "没权限改 $hf：请手动删掉含 '# dsh-route' 的那两行"
+      fi
+    fi
+  fi
+fi
 # 安装时可能残留的临时文件
 if [ "$DRY" = 0 ]; then
   rm -f /tmp/dsh-route.service.* /tmp/dsh-route.sys.* /tmp/com.dshroute.agent.plist.* \
