@@ -388,11 +388,11 @@ apply_host_alias() {
     return 0
   fi
   if [ "$DRY" = 1 ]; then
-    say "[dry-run] 在 $HOSTS_FILE 写入「127.0.0.1 $HOST_ALIAS」（带 $HOSTS_MARK 标记，卸载时移除）"
+    say "[dry-run] 在 $HOSTS_FILE 写入「127.0.0.1 ${HOST_ALIAS}」（带 $HOSTS_MARK 标记，卸载时移除）"
     return 0
   fi
   if [ ! -f "$HOSTS_FILE" ]; then
-    warn "找不到 $HOSTS_FILE，跳过别名"
+    warn "找不到 ${HOSTS_FILE}，跳过别名"
     return 0
   fi
   tmp="$(mktemp)"
@@ -404,7 +404,7 @@ apply_host_alias() {
     sudo cp "$tmp" "$HOSTS_FILE"
   else
     rm -f "$tmp"
-    say "没改 $HOSTS_FILE（需要 sudo）。想用 http://$HOST_ALIAS:${CTL:-3090}/ 可以二选一："
+    say "没改 ${HOSTS_FILE}（需要 sudo）。想用 http://$HOST_ALIAS:${CTL:-3090}/ 可以二选一："
     say "    dsh-route host-alias            # 会提示输入密码"
     say "    echo '127.0.0.1 $HOST_ALIAS' | sudo tee -a $HOSTS_FILE"
     if is_wsl; then
@@ -415,7 +415,7 @@ apply_host_alias() {
   fi
   rm -f "$tmp"
   HOSTS_APPLIED=1
-  say "访问别名已写入 $HOSTS_FILE：$HOST_ALIAS（带 $HOSTS_MARK 标记，卸载时移除）"
+  say "访问别名已写入 ${HOSTS_FILE}：${HOST_ALIAS}（带 $HOSTS_MARK 标记，卸载时移除）"
 }
 step "访问别名（/etc/hosts）"
 apply_host_alias

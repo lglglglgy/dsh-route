@@ -171,7 +171,7 @@ if [ "${HOSTS_APPLIED:-0}" = 1 ] && [ -n "${HOST_ALIAS:-}" ]; then
         say "已从 $hf 移除访问别名 $HOST_ALIAS"
       else
         rm -f "$htmp"
-        warn "没权限改 $hf：请手动删掉含 '# dsh-route' 的那两行"
+        warn "没权限改 ${hf}：请手动删掉含 '# dsh-route' 的那两行"
       fi
     fi
   fi
