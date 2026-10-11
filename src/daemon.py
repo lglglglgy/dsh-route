@@ -108,6 +108,7 @@ def local_zstd_decompress(data: bytes) -> bytes | None:
 
 HOME = Path.home()
 HOSTS_FILE = Path(os.environ.get("DSH_ROUTE_HOSTS_FILE") or "/etc/hosts")   # 测试可覆盖
+HOSTS_MARK = "# dsh-route"                                                  # 自己写的行的标记
 RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "dsh-route"
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = Path(os.environ.get("DSH_ROUTE_CONFIG") or (HOME / ".config/dsh-route/config"))
@@ -1466,16 +1467,88 @@ def alias_in_hosts(alias: str) -> bool:
     return False
 
 
+def alias_resolves(alias: str) -> bool:
+    try:
+        socket.getaddrinfo(alias, None)
+        return True
+    except OSError:
+        return False
+
+
+ALIAS_STATE: dict[str, object] = {"ok": False, "note": "还没检查", "managed": False, "checked": 0.0}
+ALIAS_CHECK_SEC = 300
+
+
+def host_lines(alias: str) -> str:
+    return f"127.0.0.1\t{alias}\t{HOSTS_MARK}\n::1\t{alias}\t{HOSTS_MARK}\n"
+
+
+def write_hosts_alias(alias: str) -> tuple[bool, str]:
+    """把别名写进 hosts：能直接写就写（root/系统服务就能做到），否则试免密 sudo。"""
+    read_err = ""
+    try:
+        cur = HOSTS_FILE.read_text(encoding="utf-8", errors="replace") if HOSTS_FILE.exists() else ""
+    except OSError as exc:
+        cur, read_err = "", str(exc)
+    payload = "".join(l + "\n" for l in cur.splitlines() if HOSTS_MARK not in l) + host_lines(alias)
+    direct_err = ""
+    try:                                     # 1) 直接写
+        HOSTS_FILE.write_text(payload, encoding="utf-8")
+        return True, "服务已自动写入 hosts"
+    except OSError as exc:
+        direct_err = str(exc)
+    if shutil.which("sudo"):                 # 2) 免密 sudo（非交互，失败就放弃）
+        try:
+            proc = subprocess.run(["sudo", "-n", "tee", str(HOSTS_FILE)],
+                                  input=payload.encode(), capture_output=True, timeout=15)
+            if proc.returncode == 0:
+                return True, "服务已通过免密 sudo 写入 hosts"
+        except Exception:
+            pass
+    return False, (f"需要管理员权限（{direct_err or read_err}）：跑 dsh-route host-alias，"
+                   f"或用 ./install.sh --system 装成系统服务后由服务自动维护")
+
+
+def ensure_host_alias(force: bool = False) -> dict:
+    """检查别名在不在，不在就补 —— 装成系统服务（root）时这一步全自动、且重启后也会补回来。"""
+    alias = host_alias()
+    now = time.time()
+    if not force and now - float(ALIAS_STATE["checked"]) < ALIAS_CHECK_SEC:
+        return ALIAS_STATE
+    ALIAS_STATE["checked"] = now
+    if not alias:
+        ALIAS_STATE.update(ok=False, note="未配置 HOST_ALIAS", managed=False)
+        return ALIAS_STATE
+    if alias_in_hosts(alias) or alias_resolves(alias):
+        ALIAS_STATE.update(ok=True, note="已在 hosts 里", managed=False)
+        return ALIAS_STATE
+    ok, note = write_hosts_alias(alias)
+    ALIAS_STATE.update(ok=ok, note=note, managed=ok)
+    log(f"访问别名 {alias}：{note}")
+    return ALIAS_STATE
+
+
+def alias_loop() -> None:
+    while True:
+        time.sleep(ALIAS_CHECK_SEC)
+        try:
+            ensure_host_alias()
+        except Exception as exc:             # 不让它影响主流程
+            log(f"别名检查异常：{exc}")
+
+
 def friendly_url() -> dict:
     """给界面/命令行用的访问地址：优先 hosts 别名，其次 localhost（双栈已监听）。"""
     port = int(CONFIG["CONTROL_PORT"])
     alias = host_alias()
     local = "http://localhost:%d/" % port
-    if alias and alias_in_hosts(alias):
+    ok = bool(ALIAS_STATE.get("ok")) or alias_in_hosts(alias)
+    note = str(ALIAS_STATE.get("note") or ("已在 hosts 里" if ok else "未写进 hosts"))
+    if alias and ok:
         return {"url": "http://%s:%d/" % (alias, port), "url_local": local,
-                "host_alias": alias, "alias_ok": True}
+                "host_alias": alias, "alias_ok": True, "alias_note": note}
     return {"url": local, "url_local": local, "url_ip": "http://127.0.0.1:%d/" % port,
-            "host_alias": alias, "alias_ok": False}
+            "host_alias": alias, "alias_ok": False, "alias_note": note}
 
 
 def main() -> int:
@@ -1488,6 +1561,8 @@ def main() -> int:
         f"API key {'已配置' if api_key() else '未配置'}")
     threading.Thread(target=scan_loop, daemon=True).start()
     threading.Thread(target=metrics_loop, daemon=True).start()
+    threading.Thread(target=alias_loop, daemon=True).start()
+    ensure_host_alias(force=True)            # 启动时先检查访问别名，不在就补（root 服务下全自动）
     port = int(CONFIG["CONTROL_PORT"])
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     # 顺便监听 ::1：有些系统把 localhost 解析成 IPv6，这样 http://localhost:3090/ 也能打开
@@ -1497,8 +1572,7 @@ def main() -> int:
     except OSError as exc:
         log(f"IPv6 回环监听跳过（不影响 127.0.0.1）：{exc}")
     info = friendly_url()
-    log(f"访问地址：{info['url']}"
-        + ("" if info["alias_ok"] else f"（未配置 hosts 别名；127.0.0.1:{port} 一直可用）"))
+    log(f"访问地址：{info['url']}（{info['alias_note']}）")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -32,6 +32,10 @@ STATE_DIR="${DSH_ROUTE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/dsh-rout
 HOST_ALIAS="${DSH_ROUTE_HOST_ALIAS:-dsh.local}"     # 访问别名；置空表示不改 hosts
 HOSTS_FILE="${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"    # 测试可覆盖
 HOSTS_MARK="# dsh-route"
+WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+WIN_HOSTS="/mnt/c/Windows/System32/drivers/etc/hosts"
+WIN_PS1="/mnt/c/Windows/Temp/dsh-route-hosts.ps1"
+WIN_HOSTS_REQ=""                                    # 空=交互式时自动问；1=强制；0=跳过
 SVC=dsh-route
 LABEL=com.dshroute.agent
 SYSTEM_UNIT_DIR=/etc/systemd/system
@@ -48,6 +52,8 @@ while [ $# -gt 0 ]; do
     --config-dir)   CONFIG_DIR="$2"; shift 2 ;;
     --host-alias)   HOST_ALIAS="$2"; shift 2 ;;
     --no-host-alias) HOST_ALIAS=""; shift ;;
+    --windows-hosts)    WIN_HOSTS_REQ=1; shift ;;
+    --no-windows-hosts) WIN_HOSTS_REQ=0; shift ;;
     --service-kind) SERVICE_KIND="$2"; shift 2 ;;
     --system)       SERVICE_KIND=systemd-system; shift ;;
     --no-service)   NO_SERVICE=1; shift ;;
@@ -380,8 +386,64 @@ EOF
 install_service
 if [ "$DRY" = 0 ]; then printf '%s\n' "$SERVICE_KIND" > "$PREFIX/.service-kind"; fi
 
-# ── 访问别名：写 /etc/hosts，让地址变成 http://dsh.local:3090/ ──
+# ── 访问别名：写 hosts，让地址变成 http://dsh.local:3090/ ──
 HOSTS_APPLIED=0
+HOSTS_WIN_APPLIED=0
+
+# WSL：Windows 的 hosts 才是"浏览器真正用的那份"（WSL 的每次启动会重建）
+win_ps1_write() {   # add|remove
+  if [ "$1" = remove ]; then
+    cat > "$WIN_PS1" <<'PSEOF'
+param([string]$Path = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'))
+$kept = Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '# dsh-route' }
+Set-Content -LiteralPath $Path -Value $kept -Encoding ASCII
+Write-Host "已移除 dsh-route 相关行 -> $Path"
+PSEOF
+  else
+    cat > "$WIN_PS1" <<PSEOF
+param([string]\$Path = (Join-Path \$env:SystemRoot 'System32\\drivers\\etc\\hosts'))
+if ((Get-Content -LiteralPath \$Path) -match '${HOST_ALIAS}') {
+  Write-Host "已存在，跳过 -> \$Path"
+} else {
+  Add-Content -LiteralPath \$Path -Value "127.0.0.1\`t${HOST_ALIAS}\`t# dsh-route"
+  Write-Host "已写入 127.0.0.1 ${HOST_ALIAS} -> \$Path"
+}
+PSEOF
+  fi
+}
+
+# 触发 UAC（管理员 PowerShell）执行刚生成的脚本
+win_ps1_run_elevated() {
+  "$WIN_PS" -NoProfile -Command \
+    "Start-Process -Verb RunAs -Wait powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\Windows\\Temp\\dsh-route-hosts.ps1'"
+}
+
+apply_host_alias_windows() {
+  [ "$WIN_HOSTS_REQ" = 0 ] && return 0
+  [ "$DRY" = 0 ] || return 0
+  [ -x "$WIN_PS" ] && [ -d /mnt/c/Windows/Temp ] || return 0      # 不是 WSL 就算了
+  if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
+    say "Windows hosts 里已有 $HOST_ALIAS"
+    HOSTS_WIN_APPLIED=1
+    return 0
+  fi
+  if [ "$WIN_HOSTS_REQ" = 1 ] || { [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ]; }; then
+    win_ps1_write add
+    say "接下来会在 Windows 弹一次 UAC 授权（把 $HOST_ALIAS 写进 Windows 的 hosts）…"
+    if win_ps1_run_elevated; then
+      if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
+        HOSTS_WIN_APPLIED=1
+        say "Windows hosts 已写入：$HOST_ALIAS（卸载时会移除）"
+      else
+        warn "UAC 已确认但没读到写入结果，可稍后跑 dsh-route host-alias --windows"
+      fi
+    else
+      warn "没能弹 UAC，可稍后跑：dsh-route host-alias --windows"
+    fi
+  else
+    say "想让 Windows 浏览器也用 http://$HOST_ALIAS:${CTL:-3090}/ ：跑 dsh-route host-alias --windows（弹一次 UAC）"
+  fi
+}
 apply_host_alias() {
   if [ -z "$HOST_ALIAS" ]; then
     say "按 --no-host-alias 跳过 /etc/hosts"
@@ -398,19 +460,37 @@ apply_host_alias() {
   tmp="$(mktemp)"
   grep -v "$HOSTS_MARK" "$HOSTS_FILE" > "$tmp" 2>/dev/null || cp "$HOSTS_FILE" "$tmp" 2>/dev/null || : > "$tmp"
   printf '127.0.0.1\t%s\t%s\n::1\t%s\t%s\n' "$HOST_ALIAS" "$HOSTS_MARK" "$HOST_ALIAS" "$HOSTS_MARK" >> "$tmp"
+
+  alias_manual_hint() {
+    say "没改 ${HOSTS_FILE}（需要管理员权限）。想用 http://$HOST_ALIAS:${CTL:-3090}/ ："
+    say "    dsh-route host-alias            # 会提示输入密码"
+    say "    echo '127.0.0.1 $HOST_ALIAS' | sudo tee -a $HOSTS_FILE"
+    if is_wsl; then
+      say "  WSL 提示：/etc/hosts 每次启动会重建，建议写到 Windows 那份（浏览器在 Windows 上也是这份）："
+      say "    dsh-route host-alias --windows   # 会弹一次 UAC"
+    fi
+  }
+
   if [ -w "$HOSTS_FILE" ]; then
     cat "$tmp" > "$HOSTS_FILE"
   elif sudo -n true 2>/dev/null; then
     sudo cp "$tmp" "$HOSTS_FILE"
+  elif [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] && command -v sudo >/dev/null 2>&1; then
+    # 交互式安装：直接要一次密码写进去（非交互场景不会走到这里，免得卡住）
+    say "写 ${HOSTS_FILE} 需要管理员权限，下面会提示输入密码（不想改就 Ctrl-C 后加 --no-host-alias）"
+    if sudo cp "$tmp" "$HOSTS_FILE"; then
+      rm -f "$tmp"
+      HOSTS_APPLIED=1
+      say "访问别名已写入 ${HOSTS_FILE}：$HOST_ALIAS（带 $HOSTS_MARK 标记，卸载时移除）"
+      return 0
+    fi
+    warn "sudo 没成功，跳过别名"
+    rm -f "$tmp"
+    alias_manual_hint
+    return 0
   else
     rm -f "$tmp"
-    say "没改 ${HOSTS_FILE}（需要 sudo）。想用 http://$HOST_ALIAS:${CTL:-3090}/ 可以二选一："
-    say "    dsh-route host-alias            # 会提示输入密码"
-    say "    echo '127.0.0.1 $HOST_ALIAS' | sudo tee -a $HOSTS_FILE"
-    if is_wsl; then
-      say "  提示：WSL 的 /etc/hosts 每次启动会重建，建议加到 Windows 那份（Windows 浏览器也能用）："
-      say "    C:\\Windows\\System32\\drivers\\etc\\hosts  里加一行：127.0.0.1 $HOST_ALIAS"
-    fi
+    alias_manual_hint
     return 0
   fi
   rm -f "$tmp"
@@ -419,6 +499,7 @@ apply_host_alias() {
 }
 step "访问别名（/etc/hosts）"
 apply_host_alias
+apply_host_alias_windows
 
 # ── 安装清单：卸载器靠它精确删除（用户不需要记任何路径）────────
 case "$SERVICE_KIND" in
@@ -449,6 +530,7 @@ if [ "$DRY" = 0 ]; then
     printf 'host_alias=%s\n'   "$HOST_ALIAS"
     printf 'hosts_file=%s\n'   "$HOSTS_FILE"
     printf 'hosts_applied=%s\n' "$HOSTS_APPLIED"
+    printf 'hosts_windows=%s\n' "$HOSTS_WIN_APPLIED"
     printf 'files=daemon.py ui.html assets/ VERSION README.md\n'
   } > "$PREFIX/MANIFEST"
 fi

@@ -11,6 +11,7 @@
 #   dsh-route where           看平台、服务类型、路径与端口配置
 #   dsh-route host-alias [NAME]   把 NAME（默认 dsh.local）写进 /etc/hosts，之后用域名访问
 #   dsh-route host-alias --remove 移除 hosts 里的别名
+#   dsh-route host-alias --windows  WSL：写进 Windows 的 hosts（弹一次 UAC，浏览器在 Windows 上也生效）
 #   dsh-route start|stop|restart|enable|disable|log|status   服务控制
 #   dsh-route uninstall [--purge]   卸载（读安装清单，精确删除；--purge 连配置与历史）
 set -uo pipefail
@@ -221,6 +222,53 @@ alias_name() {
 }
 hosts_file() { printf '%s' "${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"; }
 
+# WSL：写 Windows 的 hosts（浏览器在 Windows 上，这份才真正生效；会弹一次 UAC）
+windows_powershell() {
+  local p="${DSH_ROUTE_POWERSHELL:-}"
+  if [[ -n $p ]]; then printf '%s' "$p"; return 0; fi
+  for p in "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" "$(command -v powershell.exe 2>/dev/null || true)"; do
+    [[ -n $p && -x $p ]] && { printf '%s' "$p"; return 0; }
+  done
+  return 1
+}
+
+host_alias_windows() {
+  local mode="$1" name="$2" ps win_ps1
+  ps=$(windows_powershell) || die "找不到 Windows PowerShell（--windows 只适用于 WSL）"
+  [[ -d /mnt/c/Windows/Temp ]] || die "找不到 /mnt/c/Windows/Temp（不在 WSL？）"
+  win_ps1="/mnt/c/Windows/Temp/dsh-route-hosts.ps1"
+  if [[ $mode == remove ]]; then
+    cat > "$win_ps1" <<'PSEOF'
+param([string]$Path = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'))
+$kept = Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '# dsh-route' }
+Set-Content -LiteralPath $Path -Value $kept -Encoding ASCII
+Write-Host "已移除 dsh-route 相关行 -> $Path"
+PSEOF
+  else
+    cat > "$win_ps1" <<PSEOF
+param([string]\$Path = (Join-Path \$env:SystemRoot 'System32\\drivers\\etc\\hosts'))
+if ((Get-Content -LiteralPath \$Path) -match '${name}') {
+  Write-Host "已存在，跳过 -> \$Path"
+} else {
+  Add-Content -LiteralPath \$Path -Value "127.0.0.1\`t${name}\`t# dsh-route"
+  Write-Host "已写入 127.0.0.1 ${name} -> \$Path"
+}
+PSEOF
+  fi
+  echo "  脚本已生成：$win_ps1"
+  echo "  接下来会弹一次 UAC 授权（管理员写入 Windows hosts）…"
+  if ! "$ps" -NoProfile -Command "Start-Process -Verb RunAs -Wait powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\Windows\\Temp\\dsh-route-hosts.ps1'"; then
+    echo "  没能弹 UAC。可手动（管理员 PowerShell）执行："
+    echo "      powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\dsh-route-hosts.ps1"
+    return 1
+  fi
+  if [[ $mode == remove ]]; then
+    echo "  完成：Windows hosts 里的 dsh-route 行已移除"
+  else
+    echo "  完成：Windows 浏览器现在可以用 http://$name:${CTL}/"
+  fi
+}
+
 host_alias_cmd() {
   local mode="${1:-add}" name="${2:-}" hf tmp
   [[ $mode == remove ]] || name="${name:-$(alias_name)}"
@@ -257,8 +305,12 @@ case "${1:-status}" in
     rm -f "$tmp"
     echo "${url:-http://localhost:$CTL/}" ;;
   host-alias)
-    if [[ ${2:-} == --remove || ${2:-} == remove ]]; then host_alias_cmd remove
-    else host_alias_cmd add "${2:-}"; fi ;;
+    case "${2:-}" in
+      --windows)        host_alias_windows add "$(alias_name)" ;;
+      --windows-remove) host_alias_windows remove "" ;;
+      --remove|remove)  host_alias_cmd remove ;;
+      *)                host_alias_cmd add "${2:-}" ;;
+    esac ;;
   url) get_url "${2:-}" ;;
   select)
     die "主口功能已移除：每台机器都独立转发，直接用 dsh-route url <host> 或打开控制页点进去" ;;

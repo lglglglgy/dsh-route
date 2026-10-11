@@ -59,6 +59,7 @@ if [ -f "$MANIFEST" ]; then
       host_alias)    HOST_ALIAS="$v" ;;
       hosts_file)    HOSTS_FILE="$v" ;;
       hosts_applied) HOSTS_APPLIED="$v" ;;
+      hosts_windows) HOSTS_WINDOWS="$v" ;;
       *) ;;
     esac
   done < "$MANIFEST"
@@ -173,6 +174,31 @@ if [ "${HOSTS_APPLIED:-0}" = 1 ] && [ -n "${HOST_ALIAS:-}" ]; then
         rm -f "$htmp"
         warn "没权限改 ${hf}：请手动删掉含 '# dsh-route' 的那两行"
       fi
+    fi
+  fi
+fi
+# Windows 的 hosts（WSL 安装时通过 UAC 写进去的）：卸载也顺手清掉
+if [ "${HOSTS_WINDOWS:-0}" = 1 ]; then
+  wp="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  wh="/mnt/c/Windows/System32/drivers/etc/hosts"
+  wps="/mnt/c/Windows/Temp/dsh-route-hosts-remove.ps1"
+  if [ -x "$wp" ] && grep -q "# dsh-route" "$wh" 2>/dev/null; then
+    if [ "$DRY" = 1 ]; then
+      say "[dry-run] 从 Windows 的 hosts 移除 dsh-route 行（会弹 UAC）"
+    elif [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ]; then
+      cat > "$wps" <<'PSEOF'
+param([string]$Path = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'))
+$kept = Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '# dsh-route' }
+Set-Content -LiteralPath $Path -Value $kept -Encoding ASCII
+PSEOF
+      say "清 Windows hosts 需要一次 UAC…"
+      if "$wp" -NoProfile -Command "Start-Process -Verb RunAs -Wait powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\Windows\\Temp\\dsh-route-hosts-remove.ps1'"; then
+        say "已清理 Windows hosts"
+      else
+        warn "没弹成 UAC；可手动删掉 Windows hosts 里带 '# dsh-route' 的行"
+      fi
+    else
+      warn "Windows hosts 里还有 dsh-route 行：跑 dsh-route host-alias --windows-remove"
     fi
   fi
 fi
