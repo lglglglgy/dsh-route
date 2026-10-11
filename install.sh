@@ -11,6 +11,7 @@
 #   ./install.sh --config-dir DIR      配置目录（默认 ~/.config/dsh-route）
 #   ./install.sh --host-alias NAME     访问别名，默认 dsh.local（幂等写进 /etc/hosts，卸载时移除）
 #   ./install.sh --no-host-alias       不碰 /etc/hosts
+#   ./install.sh --host-alias-prompt   macOS 非交互安装时，生成桌面授权文件（默认不生成）
 #   ./install.sh --uninstall            卸载（保留配置与历史）
 #   ./install.sh --uninstall --purge    连配置、余额历史一起删除
 #   ./install.sh --dry-run --uninstall  只打印会删什么
@@ -36,6 +37,7 @@ WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 WIN_HOSTS="/mnt/c/Windows/System32/drivers/etc/hosts"
 WIN_PS1="/mnt/c/Windows/Temp/dsh-route-hosts.ps1"
 WIN_HOSTS_REQ=""                                    # 空=交互式时自动问；1=强制；0=跳过
+HOST_ALIAS_PROMPT=0                                 # 1=macOS 上生成桌面授权文件（默认不生成）
 SVC=dsh-route
 LABEL=com.dshroute.agent
 SYSTEM_UNIT_DIR=/etc/systemd/system
@@ -53,6 +55,7 @@ while [ $# -gt 0 ]; do
     --host-alias)   HOST_ALIAS="$2"; shift 2 ;;
     --no-host-alias) HOST_ALIAS=""; shift ;;
     --windows-hosts)    WIN_HOSTS_REQ=1; shift ;;
+    --host-alias-prompt) HOST_ALIAS_PROMPT=1; shift ;;
     --no-windows-hosts) WIN_HOSTS_REQ=0; shift ;;
     --service-kind) SERVICE_KIND="$2"; shift 2 ;;
     --system)       SERVICE_KIND=systemd-system; shift ;;
@@ -514,9 +517,8 @@ apply_host_alias() {
     cat "$tmp" > "$HOSTS_FILE"
   elif sudo -n true 2>/dev/null; then
     sudo cp "$tmp" "$HOSTS_FILE"
-  elif [ "$(uname -s)" = Darwin ] && [ "$DRY" = 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] \
-       && command -v open >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1 \
-       && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+  elif [ "$(uname -s)" = Darwin ] && [ "$DRY" = 0 ] && [ "$HOST_ALIAS_PROMPT" = 1 ] \
+       && command -v open >/dev/null 2>&1 && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
     # macOS：生成桌面授权文件并在图形会话打开（系统授权框支持 Touch ID）
     cmd_file="$HOME/Desktop/dsh-route-写入hosts.command"
     rm -f "$tmp"
@@ -670,6 +672,19 @@ if [ -n "$HOST_ALIAS" ] && [ "$HOSTS_APPLIED" = 1 ]; then
 else
   say "控制页：http://localhost:${CTL:-3090}/    （或 http://127.0.0.1:${CTL:-3090}/）"
   [ -n "$HOST_ALIAS" ] && say "  想用 http://$HOST_ALIAS:${CTL:-3090}/：dsh-route host-alias"
+fi
+# 别名自检：写入是否真的生效（服务已就绪，这时 curl 才有意义）
+if [ -n "$HOST_ALIAS" ] && [ "$DRY" = 0 ]; then
+  if curl -s -m 5 -o /dev/null "http://$HOST_ALIAS:${CTL:-3090}/"; then
+    say "别名自检：http://$HOST_ALIAS:${CTL:-3090}/  ✓ 可用"
+  else
+    warn "别名自检：http://$HOST_ALIAS:${CTL:-3090}/ 还打不开（hosts 没写成）"
+    say "  补写一次即可：dsh-route host-alias"
+    if is_wsl; then
+      say "  WSL 还要写 Windows 那份（浏览器在 Windows 上）：dsh-route host-alias --windows"
+    fi
+    say "  先用这个也不影响使用：http://localhost:${CTL:-3090}/（Windows 浏览器用 http://127.0.0.1:${CTL:-3090}/）"
+  fi
 fi
 say "注意：点进某台机器的 dsh web 时用 127.0.0.1（远端信任栅栏按 Host 判定）"
 say "升级：再跑一次本脚本即可（配置与余额历史不会被动）"
