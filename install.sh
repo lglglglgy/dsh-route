@@ -93,7 +93,7 @@ case "$SERVICE_KIND" in
   systemd-system)  UNIT_DIR="$SYSTEM_UNIT_DIR" ;;
   launchd)         UNIT_DIR="${UNIT_DIR:-$LAUNCHD_DIR}" ;;
   none)            UNIT_DIR="${UNIT_DIR:-$PREFIX}" ;;
-  *) die "不支持的服务类型：$SERVICE_KIND（可选 auto|systemd|systemd-system|launchd|none）" ;;
+  *) die "不支持的服务类型：${SERVICE_KIND}（可选 auto|systemd|systemd-system|launchd|none）" ;;
 esac
 [ "$SERVICE_KIND" != systemd ] && [ "$CUSTOM_UNIT" = 1 ] && true
 
@@ -138,7 +138,7 @@ check_env() {
   fi
   if [ "$SERVICE_KIND" = systemd-system ]; then
     command -v sudo >/dev/null 2>&1 || die "systemd 系统服务需要 sudo"
-    say "将用 sudo 写入 $SYSTEM_UNIT_DIR（每次装/升都要一次授权）"
+    say "将用 sudo 写入 ${SYSTEM_UNIT_DIR}（每次装/升都要一次授权）"
   fi
   if [ "$SERVICE_KIND" = none ]; then
     warn "没有 systemd/launchd：会以后台进程运行，并用 crontab @reboot 兜底自启（若可用）"
@@ -273,7 +273,7 @@ fi
 check_env
 
 # ── 代码与客户端 ────────────────────────────────────────────
-step "安装代码到 $PREFIX（版本 $VERSION）"
+step "安装代码到 ${PREFIX}（版本 ${VERSION}）"
 run mkdir -p "$PREFIX/assets" "$CONFIG_DIR" "$BIN_DIR"
 run install -m 755 "$SELF_DIR/src/daemon.py" "$PREFIX/daemon.py"
 run install -m 644 "$SELF_DIR/src/ui.html"   "$PREFIX/ui.html"
@@ -312,7 +312,7 @@ run install -m 644 "$SELF_DIR/config/config.example" "$CONFIG_DIR/config.example
 # ── 服务定义 ────────────────────────────────────────────────
 PY="$(command -v python3)"
 install_service() {
-  step "安装服务定义（$SERVICE_KIND）"
+  step "安装服务定义（${SERVICE_KIND}）"
   case "$SERVICE_KIND" in
     systemd)
       run mkdir -p "$UNIT_DIR"
@@ -411,7 +411,7 @@ wait_ready() {
 }
 
 if [ "$NO_SERVICE" = 0 ] && [ "$DRY" = 0 ]; then
-  step "启动服务（$SERVICE_KIND）"
+  step "启动服务（${SERVICE_KIND}）"
   case "$SERVICE_KIND" in
     systemd)        systemctl --user enable --now "$SVC" || die "启动失败：systemctl --user status $SVC" ;;
     systemd-system) sudo systemctl enable --now "$SVC"   || die "启动失败：systemctl status $SVC" ;;

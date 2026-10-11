@@ -82,7 +82,7 @@ if [ -x /tmp/nb/prefix/run.sh ]; then
   detach_start /tmp/nb/prefix/run.sh
   sleep 4
   code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:3191/api/status || true)
-  [ "$code" = "200" ] && ok "兜底进程起来了（3191 控制页 200）" || bad "兜底进程没起来（HTTP $code）"
+  [ "$code" = "200" ] && ok "兜底进程起来了（3191 控制页 200）" || bad "兜底进程没起来（HTTP ${code}）"
   DSH_ROUTE_PREFIX=/tmp/nb/prefix DSH_ROUTE_CONFIG=/tmp/nb/config/config bin=/tmp/nb/bin/dsh-route
   DSH_ROUTE_PREFIX=/tmp/nb/prefix DSH_ROUTE_CONFIG=/tmp/nb/config/config \
     DSH_ROUTE_STATE=/tmp/nb/state /tmp/nb/bin/dsh-route where 2>/dev/null | head -3 | sed 's/^/      /'

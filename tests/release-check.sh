@@ -16,7 +16,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/dsh-route-rel.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 VER="$(sh "$RUN" --version 2>/dev/null | sed -n 's/.*dsh-route \([0-9.]*\).*/\1/p')"
 
-echo "▸ 产物自检：$RUN${VER:+（版本 $VER）}"
+echo "▸ 产物自检：$RUN${VER:+（版本 ${VER}）}"
 
 sh "$RUN" --version >/dev/null 2>&1 && ok "--version 正常" || bad "--version 失败"
 sh "$RUN" --list >/dev/null 2>&1 && ok "--list 正常（载荷可解出）" || bad "--list 失败"

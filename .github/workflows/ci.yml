@@ -32,6 +32,9 @@ jobs:
           python3 -m py_compile src/daemon.py
           echo "全部通过"
 
+      - name: 检查 $VAR 紧邻非 ASCII（bash 3.2 + UTF-8 locale 会解析坏）
+        run: python3 tests/lint-braces.py .
+
       - name: shellcheck（只把 error 级当失败）
         run: |
           sudo apt-get update -qq

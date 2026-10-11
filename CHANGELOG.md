@@ -1,5 +1,13 @@
 # 变更记录
 
+## 0.1.1
+
+- **修复 macOS 安装失败**（UTF-8 locale + 自带 bash 3.2）：`$VAR` 紧邻中文/全角字符时，
+  bash 3.2 会把多字节字符的首字节当成变量名的一部分，配合 `set -u` 直接报 unbound variable，
+  安装在中途中断。全仓库 28 处改为 `${VAR}`，并新增 `tests/lint-braces.py` 在 CI 里防回归。
+- 这个 bug 只在 macOS + UTF-8 locale 下出现（用户终端默认如此），Linux 上跑不出来——
+  CI 的 macOS job 正是为此存在。
+
 ## 0.1.0 — 初版
 
 ### 卸载重做：清单驱动 + 卸载器进 PATH

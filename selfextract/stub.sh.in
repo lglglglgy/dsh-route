@@ -39,7 +39,7 @@ die() { printf '\n✗ %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)    usage; exit 0 ;;
-    --version)    echo "dsh-route $SELF_VERSION（构建于 $BUILT_AT）"; exit 0 ;;
+    --version)    echo "dsh-route ${SELF_VERSION}（构建于 ${BUILT_AT}）"; exit 0 ;;
     --check)      MODE=check ;;
     --list)       MODE=list ;;
     --extract)    MODE=extract ;;
@@ -91,7 +91,7 @@ tail -n +"$LINE" "$SELF" > "$PAYLOAD" || die "提取载荷失败"
 if command -v sha256sum >/dev/null 2>&1; then
   got=$(sha256sum "$PAYLOAD" | awk '{print $1}')
   if [ "$got" != "$PAYLOAD_SHA256" ]; then
-    die "载荷校验失败（期望 $PAYLOAD_SHA256，实际 $got）—— 文件可能在传输中损坏"
+    die "载荷校验失败（期望 ${PAYLOAD_SHA256}，实际 ${got}）—— 文件可能在传输中损坏"
   fi
   printf '  载荷校验 sha256 ok\n'
 elif command -v shasum >/dev/null 2>&1; then

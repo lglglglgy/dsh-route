@@ -131,10 +131,10 @@ svc_log() {
 
 require_service() {
   service_active && return 0
-  echo "服务未运行（$KIND），正在启动 ..." >&2
+  echo "服务未运行（${KIND}），正在启动 ..." >&2
   svc_start 2>/dev/null
   for _ in $(seq 1 10); do service_active && return 0; sleep 1; done
-  die "启动失败（服务类型 $KIND），可看：dsh-route log"
+  die "启动失败（服务类型 ${KIND}），可看：dsh-route log"
 }
 
 dump_status() {   # 把 API JSON 落到临时文件，避免 heredoc 抢占 stdin
@@ -236,21 +236,21 @@ case "${1:-status}" in
       "$KIND" "$(service_active && echo 运行中 || echo 未运行)" \
       "$DATA" "$CONFIG" "$KEY_FILE" "$CTL"
     [[ -f $CONFIG ]] && grep -E '^[A-Z_]+=' "$CONFIG" | sed 's/^/    /' ;;
-  start) svc_start && echo "已启动（$KIND）" ;;
-  stop) svc_stop && echo "已停止（$KIND）" ;;
+  start) svc_start && echo "已启动（${KIND}）" ;;
+  stop) svc_stop && echo "已停止（${KIND}）" ;;
   restart)
     case "$KIND" in
       systemd)        systemctl --user restart "$SVC" ;;
       systemd-system) sudo systemctl restart "$SVC" ;;
       *) svc_stop; sleep 1; svc_start ;;
     esac
-    echo "已重启（$KIND）" ;;
-  enable) svc_enable && echo "已设为自启并启动（$KIND）" ;;
-  disable) svc_disable && echo "已取消自启并停止（$KIND）" ;;
+    echo "已重启（${KIND}）" ;;
+  enable) svc_enable && echo "已设为自启并启动（${KIND}）" ;;
+  disable) svc_disable && echo "已取消自启并停止（${KIND}）" ;;
   log) svc_log ;;
   uninstall|remove)
     UN="$(cd "$(dirname "$0")" && pwd)/dsh-route-uninstall"
-    [ -x "$UN" ] || die "找不到卸载器：$UN（可手工删 $DATA 与 $CONFIG_DIR）"
+    [ -x "$UN" ] || die "找不到卸载器：${UN}（可手工删 $DATA 与 ${CONFIG_DIR}）"
     shift
     exec "$UN" "$@" ;;
   -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;

@@ -33,9 +33,9 @@ svc_active() {
   esac
 }
 
-echo "▸ 冒烟测试（控制页 $API，平台 $(uname -s)，服务 $KIND）"
+echo "▸ 冒烟测试（控制页 ${API}，平台 $(uname -s)，服务 ${KIND}）"
 
-if svc_active; then ok "服务运行中（$KIND）"; else bad "服务未运行（$KIND）"; fi
+if svc_active; then ok "服务运行中（${KIND}）"; else bad "服务未运行（${KIND}）"; fi
 case "$KIND" in
   systemd)        systemctl --user is-enabled --quiet dsh-route 2>/dev/null && ok "开机自启 enabled" || bad "未设置自启" ;;
   systemd-system) systemctl is-enabled --quiet dsh-route 2>/dev/null && ok "开机自启 enabled" || bad "未设置自启" ;;
@@ -53,14 +53,14 @@ code=$(curl -s -m 5 -o "$TMP/page.html" -w '%{http_code}' "$API/")
 if [ "$code" = 200 ] && grep -q "DSH WEB ROUTE" "$TMP/page.html"; then
   ok "控制页 200 且内容正确"
 else
-  bad "控制页异常（HTTP $code）"
+  bad "控制页异常（HTTP ${code}）"
 fi
 
 code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$API/assets/nunito-400.woff2")
 if [ "$code" = 200 ]; then ok "字体资源 200"; else bad "字体资源 HTTP $code"; fi
 
 code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$API/assets/../daemon.py")
-if [ "$code" = 404 ]; then ok "路径穿越被拒（404）"; else bad "路径穿越未拦截（HTTP $code）"; fi
+if [ "$code" = 404 ]; then ok "路径穿越被拒（404）"; else bad "路径穿越未拦截（HTTP ${code}）"; fi
 
 curl -s -m 5 "$API/api/status" > "$TMP/status.json"
 if python3 - "$TMP/status.json" <<'PY'

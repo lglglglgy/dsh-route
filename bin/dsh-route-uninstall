@@ -76,7 +76,7 @@ RUNTIME_DIR="${RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/dsh-route}"
 LOG_FILE="${LOG_FILE:-}"
 
 if [ "$have_manifest" = 1 ]; then
-  step "卸载 dsh-route（按安装清单 $MANIFEST）"
+  step "卸载 dsh-route（按安装清单 ${MANIFEST}）"
 else
   warn "找不到安装清单 $MANIFEST —— 退回按默认位置清理（代码目录被手工删过？）"
   step "卸载 dsh-route（无清单兜底）"
