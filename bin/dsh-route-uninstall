@@ -118,18 +118,27 @@ stop_service() {
   case "$SERVICE_KIND" in
     systemd)
       if [ -n "${UNIT_FILE:-}" ] && grep -qF "$PREFIX" "$UNIT_FILE" 2>/dev/null; then
-        if [ "$DRY" = 1 ]; then say "[dry-run] systemctl --user disable --now $UNIT_NAME"
+        frag="$(systemctl --user show -p FragmentPath "$UNIT_NAME" 2>/dev/null | cut -d= -f2)"
+        if [ -n "$frag" ] && [ "$frag" != "$UNIT_FILE" ]; then
+          say "跳过服务操作：systemd 里的 $UNIT_NAME 指向 ${frag}，不是本次安装的 $UNIT_FILE"
+        elif [ "$DRY" = 1 ]; then say "[dry-run] systemctl --user disable --now $UNIT_NAME"
         else systemctl --user disable --now "$UNIT_NAME" >/dev/null 2>&1 || true; fi
       fi ;;
     systemd-system)
       if [ -n "${UNIT_FILE:-}" ] && [ -f "$UNIT_FILE" ] && command -v sudo >/dev/null 2>&1; then
-        if [ "$DRY" = 1 ]; then say "[dry-run] sudo systemctl disable --now $UNIT_NAME"
+        frag="$(systemctl show -p FragmentPath "$UNIT_NAME" 2>/dev/null | cut -d= -f2)"
+        if [ -n "$frag" ] && [ "$frag" != "$UNIT_FILE" ]; then
+          say "跳过服务操作：systemd 里的 $UNIT_NAME 指向 ${frag}，不是本次安装的 $UNIT_FILE"
+        elif [ "$DRY" = 1 ]; then say "[dry-run] sudo systemctl disable --now $UNIT_NAME"
         else sudo systemctl disable --now "$UNIT_NAME" >/dev/null 2>&1 || true; fi
       fi ;;
     launchd)
-      if [ -f "$HOME/Library/LaunchAgents/$LABEL.plist" ]; then
+      live="$HOME/Library/LaunchAgents/$LABEL.plist"
+      if [ -f "$live" ] && { [ -z "${UNIT_FILE:-}" ] || [ "$UNIT_FILE" = "$live" ]; }; then
         if [ "$DRY" = 1 ]; then say "[dry-run] launchctl bootout gui/$(id -u)/$LABEL"
         else launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true; fi
+      elif [ -n "${UNIT_FILE:-}" ] && [ -f "$live" ]; then
+        say "跳过服务操作：已加载的 $LABEL 用的是 ${live}，不是本次安装的 $UNIT_FILE"
       fi ;;
     none|"")
       if [ -f "$STATE_DIR/dsh-route.pid" ]; then
@@ -155,53 +164,108 @@ step "删除安装过的文件"
 for p in "$UNIT_FILE" "${RUNTIME_DIR}" "${LOG_FILE}"; do
   [ -n "${p:-}" ] && safe_rm "$p"
 done
-# 安装时写进 /etc/hosts 的访问别名（只删自己带标记的那两行）
-if [ "${HOSTS_APPLIED:-0}" = 1 ] && [ -n "${HOST_ALIAS:-}" ]; then
-  hf="${HOSTS_FILE:-/etc/hosts}"
-  if [ -f "$hf" ] && grep -qF "$HOST_ALIAS" "$hf" 2>/dev/null; then
-    if [ "$DRY" = 1 ]; then
-      say "[dry-run] 从 $hf 移除 $HOST_ALIAS"
-    else
-      htmp="$(mktemp)"
-      grep -vF "# dsh-route" "$hf" > "$htmp" 2>/dev/null || cp "$hf" "$htmp" 2>/dev/null || : > "$htmp"
-      if [ -w "$hf" ]; then
-        cat "$htmp" > "$hf"; rm -f "$htmp"
-        say "已从 $hf 移除访问别名 $HOST_ALIAS"
-      elif sudo -n true 2>/dev/null; then
-        sudo cp "$htmp" "$hf"; rm -f "$htmp"
-        say "已从 $hf 移除访问别名 $HOST_ALIAS"
-      else
-        rm -f "$htmp"
-        warn "没权限改 ${hf}：请手动删掉含 '# dsh-route' 的那两行"
-      fi
+# 安装时写进 /etc/hosts 的访问别名：只要文件里有自己的标记行就清理
+hosts_cleanup() {
+  hf="${1:-${HOSTS_FILE:-/etc/hosts}}"
+  [ -f "$hf" ] || return 0
+  grep -qF '# dsh-route' "$hf" 2>/dev/null || return 0
+  if [ "$DRY" = 1 ]; then
+    say "[dry-run] 从 $hf 移除带 '# dsh-route' 的行"
+    return 0
+  fi
+  htmp="$(mktemp)"
+  grep -vF '# dsh-route' "$hf" > "$htmp" 2>/dev/null || cp "$hf" "$htmp" 2>/dev/null || : > "$htmp"
+  if [ -w "$hf" ]; then
+    cat "$htmp" > "$hf" && { rm -f "$htmp"; say "已从 $hf 移除访问别名"; return 0; }
+  fi
+  if sudo -n true 2>/dev/null; then
+    sudo cp "$htmp" "$hf" && { rm -f "$htmp"; say "已从 $hf 移除访问别名（免密 sudo）"; return 0; }
+  fi
+  # macOS：系统授权框（终端里会问密码，支持指纹）
+  if [ "$(uname -s)" = Darwin ] && [ -t 0 ] && command -v osascript >/dev/null 2>&1; then
+    b64="$(base64 < "$htmp" | tr -d '\n')"
+    if osascript -e "do shell script \"printf %s '$b64' | base64 -D > '$hf'\" with administrator privileges" >/dev/null 2>&1; then
+      rm -f "$htmp"; say "已从 $hf 移除访问别名（管理员授权）"; return 0
     fi
   fi
-fi
-# Windows 的 hosts（WSL 安装时通过 UAC 写进去的）：卸载也顺手清掉
-if [ "${HOSTS_WINDOWS:-0}" = 1 ]; then
-  wp="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-  wh="/mnt/c/Windows/System32/drivers/etc/hosts"
-  wps="/mnt/c/Windows/Temp/dsh-route-hosts-remove.ps1"
-  if [ -x "$wp" ] && grep -q "# dsh-route" "$wh" 2>/dev/null; then
-    if [ "$DRY" = 1 ]; then
-      say "[dry-run] 从 Windows 的 hosts 移除 dsh-route 行（会弹 UAC）"
-    elif [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ]; then
-      cat > "$wps" <<'PSEOF'
+  # macOS：图形授权框弹不出来（例如从 ssh 跑）→ 让 Terminal 在图形会话里打开清理脚本
+  if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1 \
+     && launchctl print "gui/$(id -u)" >/dev/null 2>&1 && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ]; then
+    script="${XDG_CACHE_HOME:-$HOME/Library/Caches}/dsh-route/dsh-route-hosts-remove.command"
+    mkdir -p "$(dirname "$script")" 2>/dev/null || true
+    cat > "$script" <<'CMDEOF'
+#!/bin/bash
+set -u
+HOSTS="${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"
+NEW="$(mktemp)"
+grep -v '# dsh-route' "$HOSTS" > "$NEW" 2>/dev/null || cp "$HOSTS" "$NEW"
+B64="$(base64 < "$NEW" | tr -d '\n')"
+rm -f "$NEW"
+echo "dsh-route：从 $HOSTS 移除带 '# dsh-route' 的行"
+if osascript -e "do shell script \"printf %s '$B64' | base64 -D > '$HOSTS'\" with administrator privileges"; then
+  echo "✓ 已移除"; else echo "✗ 已取消，未改动"; fi
+echo; echo "（窗口可直接关掉）"
+CMDEOF
+    chmod +x "$script"
+    if open -a Terminal "$script" 2>/dev/null; then
+      say "已打开授权窗口：${script}（输一次密码 / 按指纹即完成清理）"
+      i=0
+      while [ $i -lt 25 ]; do
+        sleep 1; i=$((i + 1))
+        grep -qF '# dsh-route' "$hf" 2>/dev/null || { say "已从 $hf 移除访问别名"; return 0; }
+      done
+      warn "$hf 里还有别名行（授权窗口未完成）；也可跑 dsh-route host-alias --remove"
+      return 0
+    fi
+  fi
+  # 交互式终端：直接提示输入密码
+  if [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] && command -v sudo >/dev/null 2>&1; then
+    echo "  需要管理员权限删除 $hf 里的别名行，请输密码：" >&2
+    if sudo cp "$htmp" "$hf"; then
+      rm -f "$htmp"; say "已从 $hf 移除访问别名（sudo）"; return 0
+    fi
+  fi
+  rm -f "$htmp"
+  warn "$hf 里还有 '# dsh-route' 的别名行，没权限删除；跑 dsh-route host-alias --remove"
+}
+hosts_cleanup "${HOSTS_FILE:-/etc/hosts}"
+# Windows 的 hosts（WSL 安装时通过 UAC 写进去的）：只要文件里有自己的标记行就清掉
+win_hosts_cleanup() {
+  wp="${DSH_ROUTE_WIN_PS:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
+  wh="${DSH_ROUTE_WIN_HOSTS:-/mnt/c/Windows/System32/drivers/etc/hosts}"
+  wps="${DSH_ROUTE_WIN_TMP:-/mnt/c/Windows/Temp}/dsh-route-hosts-remove.ps1"
+  # 绝不碰"不属于本机用户正常安装"的场景：沙箱/CI（prefix 不在家目录、或指定了 unit 目录）
+  if [ -z "${DSH_ROUTE_WIN_HOSTS:-}" ]; then
+    case "$PREFIX" in
+      "$HOME"/*) ;;
+      *) return 0 ;;
+    esac
+    [ -z "${DSH_ROUTE_UNIT_DIR:-}" ] && [ "${CUSTOM_UNIT:-0}" != 1 ] || return 0
+  fi
+  [ -x "$wp" ] || return 0
+  grep -qF '# dsh-route' "$wh" 2>/dev/null || return 0
+  if [ "$DRY" = 1 ]; then
+    say "[dry-run] 从 Windows 的 hosts 移除 '# dsh-route' 行（会弹 UAC）"
+    return 0
+  fi
+  if [ -n "${DSH_ROUTE_NO_PROMPT:-}" ]; then
+    warn "Windows hosts 里还有 '# dsh-route' 行：跑 dsh-route host-alias --windows-remove"
+    return 0
+  fi
+  cat > "$wps" <<'PSEOF'
 param([string]$Path = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'))
 $kept = Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '# dsh-route' }
 Set-Content -LiteralPath $Path -Value $kept -Encoding ASCII
 PSEOF
-      say "清 Windows hosts 需要一次 UAC…"
-      if "$wp" -NoProfile -Command "Start-Process -Verb RunAs -Wait powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\Windows\\Temp\\dsh-route-hosts-remove.ps1'"; then
-        say "已清理 Windows hosts"
-      else
-        warn "没弹成 UAC；可手动删掉 Windows hosts 里带 '# dsh-route' 的行"
-      fi
-    else
-      warn "Windows hosts 里还有 dsh-route 行：跑 dsh-route host-alias --windows-remove"
-    fi
+  say "清 Windows hosts 需要一次 UAC 授权…"
+  if "$wp" -NoProfile -Command "Start-Process -Verb RunAs -Wait powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\Windows\\Temp\\dsh-route-hosts-remove.ps1'" \
+     && ! grep -qF '# dsh-route' "$wh" 2>/dev/null; then
+    say "已清理 Windows hosts 里的访问别名"
+  else
+    warn "Windows hosts 里还有 '# dsh-route' 行：跑 dsh-route host-alias --windows-remove"
   fi
-fi
+}
+win_hosts_cleanup
 # 安装时可能残留的临时文件
 if [ "$DRY" = 0 ]; then
   rm -f /tmp/dsh-route.service.* /tmp/dsh-route.sys.* /tmp/com.dshroute.agent.plist.* \

@@ -11,7 +11,6 @@
 #   ./install.sh --config-dir DIR      配置目录（默认 ~/.config/dsh-route）
 #   ./install.sh --host-alias NAME     访问别名，默认 dsh.local（幂等写进 /etc/hosts，卸载时移除）
 #   ./install.sh --no-host-alias       不碰 /etc/hosts
-#   ./install.sh --host-alias-prompt   macOS 非交互安装时，生成桌面授权文件（默认不生成）
 #   ./install.sh --uninstall            卸载（保留配置与历史）
 #   ./install.sh --uninstall --purge    连配置、余额历史一起删除
 #   ./install.sh --dry-run --uninstall  只打印会删什么
@@ -33,11 +32,11 @@ STATE_DIR="${DSH_ROUTE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/dsh-rout
 HOST_ALIAS="${DSH_ROUTE_HOST_ALIAS:-dsh.local}"     # 访问别名；置空表示不改 hosts
 HOSTS_FILE="${DSH_ROUTE_HOSTS_FILE:-/etc/hosts}"    # 测试可覆盖
 HOSTS_MARK="# dsh-route"
-WIN_PS="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-WIN_HOSTS="/mnt/c/Windows/System32/drivers/etc/hosts"
-WIN_PS1="/mnt/c/Windows/Temp/dsh-route-hosts.ps1"
+WIN_PS="${DSH_ROUTE_WIN_PS:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
+WIN_HOSTS="${DSH_ROUTE_WIN_HOSTS:-/mnt/c/Windows/System32/drivers/etc/hosts}"
+WIN_TMP="${DSH_ROUTE_WIN_TMP:-/mnt/c/Windows/Temp}"
+WIN_PS1="$WIN_TMP/dsh-route-hosts.ps1"
 WIN_HOSTS_REQ=""                                    # 空=交互式时自动问；1=强制；0=跳过
-HOST_ALIAS_PROMPT=0                                 # 1=macOS 上生成桌面授权文件（默认不生成）
 SVC=dsh-route
 LABEL=com.dshroute.agent
 SYSTEM_UNIT_DIR=/etc/systemd/system
@@ -55,7 +54,6 @@ while [ $# -gt 0 ]; do
     --host-alias)   HOST_ALIAS="$2"; shift 2 ;;
     --no-host-alias) HOST_ALIAS=""; shift ;;
     --windows-hosts)    WIN_HOSTS_REQ=1; shift ;;
-    --host-alias-prompt) HOST_ALIAS_PROMPT=1; shift ;;
     --no-windows-hosts) WIN_HOSTS_REQ=0; shift ;;
     --service-kind) SERVICE_KIND="$2"; shift 2 ;;
     --system)       SERVICE_KIND=systemd-system; shift ;;
@@ -456,27 +454,32 @@ win_ps1_run_elevated() {
 apply_host_alias_windows() {
   [ "$WIN_HOSTS_REQ" = 0 ] && return 0
   [ "$DRY" = 0 ] || return 0
-  [ -x "$WIN_PS" ] && [ -d /mnt/c/Windows/Temp ] || return 0      # 不是 WSL 就算了
+  [ -x "$WIN_PS" ] && [ -d "$WIN_TMP" ] || return 0          # 不是 WSL 就算了
+  # 只对"本机用户正常安装"弹 UAC：沙箱/CI（prefix 不在家目录、指定 unit 目录）一律跳过，免得刷屏
+  if [ -z "${DSH_ROUTE_WIN_HOSTS:-}" ]; then
+    case "$PREFIX" in
+      "$HOME"/*) ;;
+      *) return 0 ;;
+    esac
+    [ -z "${DSH_ROUTE_UNIT_DIR:-}" ] && [ "${CUSTOM_UNIT:-0}" != 1 ] || return 0
+  fi
   if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
     say "Windows hosts 里已有 ${HOST_ALIAS}（永久有效，不需要再弹 UAC）"
     HOSTS_WIN_APPLIED=1
     return 0
   fi
-  if [ "$WIN_HOSTS_REQ" = 1 ] || { [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ]; }; then
-    win_ps1_write add
-    say "接下来会在 Windows 弹一次 UAC 授权（把 $HOST_ALIAS 写进 Windows 的 hosts）…"
-    if win_ps1_run_elevated; then
-      if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
-        HOSTS_WIN_APPLIED=1
-        say "Windows hosts 已写入：${HOST_ALIAS}（卸载时会移除）"
-      else
-        warn "UAC 已确认但没读到写入结果，可稍后跑 dsh-route host-alias --windows"
-      fi
-    else
-      warn "没能弹 UAC，可稍后跑：dsh-route host-alias --windows"
-    fi
-  else
+  if [ -n "${DSH_ROUTE_NO_PROMPT:-}" ]; then
     say "想让 Windows 浏览器也用 http://$HOST_ALIAS:${CTL:-3090}/ ：跑 dsh-route host-alias --windows（弹一次 UAC）"
+    return 0
+  fi
+  # 安装是用户主动发起的：直接弹 UAC 写进去（不要求交互式终端）
+  win_ps1_write add
+  say "接下来会在 Windows 弹一次 UAC 授权（把 $HOST_ALIAS 写进 Windows 的 hosts）…"
+  if win_ps1_run_elevated && grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
+    HOSTS_WIN_APPLIED=1
+    say "Windows hosts 已写入：${HOST_ALIAS}（卸载时会移除）"
+  else
+    warn "没能写入 Windows hosts（UAC 被取消？）；可稍后跑：dsh-route host-alias --windows"
   fi
 }
 apply_host_alias() {
@@ -517,29 +520,37 @@ apply_host_alias() {
     cat "$tmp" > "$HOSTS_FILE"
   elif sudo -n true 2>/dev/null; then
     sudo cp "$tmp" "$HOSTS_FILE"
-  elif [ "$(uname -s)" = Darwin ] && [ "$DRY" = 0 ] && [ "$HOST_ALIAS_PROMPT" = 1 ] \
-       && command -v open >/dev/null 2>&1 && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
-    # macOS：生成桌面授权文件并在图形会话打开（系统授权框支持 Touch ID）
-    cmd_file="$HOME/Desktop/dsh-route-写入hosts.command"
-    rm -f "$tmp"
-    mac_write_authorize_command "$cmd_file"
-    DESKTOP_CMD="$cmd_file"
-    if open -a Terminal "$cmd_file" 2>/dev/null; then
-      say "已打开授权窗口：$cmd_file"
-      say "在弹框里用 Touch ID（或密码）确认一次，之后 http://$HOST_ALIAS:${CTL:-3090}/ 永久可用"
-      i=0
-      while [ $i -lt 25 ]; do
-        sleep 1; i=$((i + 1))
-        if grep -q "$HOST_ALIAS" "$HOSTS_FILE" 2>/dev/null; then HOSTS_APPLIED=1; break; fi
-      done
-      if [ "$HOSTS_APPLIED" = 1 ]; then
-        say "访问别名已写入 ${HOSTS_FILE}：$HOST_ALIAS"
-      else
-        say "还没写入；桌面上的 $cmd_file 可以再双击一次"
-      fi
+  elif [ "$(uname -s)" = Darwin ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] \
+       && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+    # macOS：能用图形授权就用图形 —— 先弹系统授权框（输密码/指纹即可，不占终端）
+    b64="$(base64 < "$tmp" | tr -d '\n')"
+    if [ -t 0 ] && osascript -e "do shell script \"printf %s '$b64' | base64 -D > '$HOSTS_FILE'\" with administrator privileges" >/dev/null 2>&1; then
+      rm -f "$tmp"
+      HOSTS_APPLIED=1
+      say "访问别名已写入 ${HOSTS_FILE}：${HOST_ALIAS}（图形授权）"
       return 0
     fi
-    say "没能自动打开授权窗口，请双击桌面上的：$cmd_file"
+    # 图形框弹不出来（例如从 ssh 里跑）：让 Terminal 在图形会话里打开授权脚本
+    if command -v open >/dev/null 2>&1; then
+      cmd_file="${XDG_CACHE_HOME:-$HOME/Library/Caches}/dsh-route/dsh-route-hosts.command"
+      mkdir -p "$(dirname "$cmd_file")" 2>/dev/null || true
+      rm -f "$tmp"
+      mac_write_authorize_command "$cmd_file"
+      DESKTOP_CMD="$cmd_file"
+      if open -a Terminal "$cmd_file" 2>/dev/null; then
+        say "已打开授权窗口（${cmd_file}）：输一次密码 / 按指纹即可"
+        i=0
+        while [ $i -lt 25 ]; do
+          sleep 1; i=$((i + 1))
+          if grep -q "$HOST_ALIAS" "$HOSTS_FILE" 2>/dev/null; then HOSTS_APPLIED=1; break; fi
+        done
+        if [ "$HOSTS_APPLIED" = 1 ]; then say "访问别名已写入 ${HOSTS_FILE}：$HOST_ALIAS"
+        else say "还没写入（在授权窗口里确认后即生效）；也可随时跑 dsh-route host-alias"; fi
+        return 0
+      fi
+    fi
+    rm -f "$tmp"
+    alias_manual_hint
     return 0
   elif [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] && command -v sudo >/dev/null 2>&1; then
     # 交互式安装：直接要一次密码写进去（非交互场景不会走到这里，免得卡住）

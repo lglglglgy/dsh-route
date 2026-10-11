@@ -13,6 +13,8 @@ ok()  { printf '  ✓ %s\n' "$*"; pass=$((pass + 1)); }
 bad() { printf '  ✗ %s\n' "$*"; fail=$((fail + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/dsh-route-rel.XXXXXX")"
+export DSH_ROUTE_WIN_HOSTS="$TMP/win-hosts.injected" DSH_ROUTE_WIN_PS=/bin/true DSH_ROUTE_WIN_TMP="$TMP/win-tmp"
+
 trap 'rm -rf "$TMP"' EXIT
 VER="$(sh "$RUN" --version 2>/dev/null | sed -n 's/.*dsh-route \([0-9.]*\).*/\1/p')"
 
@@ -43,9 +45,20 @@ grep -q "$TMP/prefix" "$TMP/bin/dsh-route-uninstall" 2>/dev/null \
   && ok "卸载器烧入了本次安装路径" || bad "卸载器没烧入路径"
 
 # dry-run：读自己的清单、且不删任何东西
-out="$( "$TMP/bin/dsh-route-uninstall" --dry-run 2>&1 )" --host-alias dsh-test.local
+out="$( "$TMP/bin/dsh-route-uninstall" --dry-run 2>&1 )"
 
 echo "$out" | grep -q "$TMP/prefix/MANIFEST" && ok "dry-run 读的是自己的清单" || bad "dry-run 读错清单"
+
+# .run 的参数必须透传给 install.sh（桩曾用白名单拒绝 --host-alias/--windows-hosts 等）
+if "$RUN" --dry-run --prefix "$TMP/p2" --host-alias dsh-test.local >"$TMP/passthru.log" 2>&1; then
+  if grep -q "未知参数" "$TMP/passthru.log"; then
+    bad ".run 拒绝透传参数（未知参数）"
+  else
+    ok ".run 参数透传正常（--host-alias / --prefix）"
+  fi
+else
+  bad ".run 透传参数时退出码非 0"
+fi
 if [ -e "$TMP/prefix/daemon.py" ] && [ -e "$TMP/bin/dsh-route" ]; then
   ok "dry-run 没改动文件"
 else
