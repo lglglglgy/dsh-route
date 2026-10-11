@@ -12,7 +12,11 @@
 #   ./dsh-route-@VERSION@.run --version            打印版本
 #
 #   其余参数原样交给包内 install.sh，例如：
-#     --prefix DIR  --bin-dir DIR  --config-dir DIR  --unit-dir DIR
+#   ./dsh-route-@VERSION@.run [install.sh 的参数]
+#     其余参数原样透传给 install.sh，例如：
+#     --prefix DIR  --bin-dir DIR  --config-dir DIR  --host-alias NAME  --no-host-alias
+#     --windows-hosts  --no-windows-hosts  --host-alias-prompt  --system  --no-service
+#     --dry-run  --uninstall  --purge  -h/--help
 #     --no-service  --dry-run  --uninstall  --purge
 #
 # 结构：本文件 = 这段 shell 桩 + 空行标记 + tar.gz 载荷（下方直接拼接）
@@ -48,13 +52,8 @@ while [ $# -gt 0 ]; do
     --keep)       KEEP=1 ;;
     --target|--tmpdir) TARGET="$2"; shift ;;
     --target=*|--tmpdir=*) TARGET="${1#*=}" ;;
-    --prefix|--bin-dir|--config-dir|--unit-dir)
-                  [ $# -ge 2 ] || die "$1 需要一个参数"
-                  INSTALL_ARGS="$INSTALL_ARGS $1 $2"; shift ;;
-    --no-service|--dry-run|--uninstall|--purge)
-                  INSTALL_ARGS="$INSTALL_ARGS $1" ;;
     --)           shift; while [ $# -gt 0 ]; do INSTALL_ARGS="$INSTALL_ARGS $1"; shift; done; break ;;
-    *)            die "未知参数：$1（--help 看用法）" ;;
+    *)            INSTALL_ARGS="$INSTALL_ARGS $1" ;;   # 其余一律透传给 install.sh（含带值的参数）
   esac
   shift
 done

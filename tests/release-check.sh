@@ -43,7 +43,8 @@ grep -q "$TMP/prefix" "$TMP/bin/dsh-route-uninstall" 2>/dev/null \
   && ok "卸载器烧入了本次安装路径" || bad "卸载器没烧入路径"
 
 # dry-run：读自己的清单、且不删任何东西
-out="$( "$TMP/bin/dsh-route-uninstall" --dry-run 2>&1 )"
+out="$( "$TMP/bin/dsh-route-uninstall" --dry-run 2>&1 )" --host-alias dsh-test.local
+
 echo "$out" | grep -q "$TMP/prefix/MANIFEST" && ok "dry-run 读的是自己的清单" || bad "dry-run 读错清单"
 if [ -e "$TMP/prefix/daemon.py" ] && [ -e "$TMP/bin/dsh-route" ]; then
   ok "dry-run 没改动文件"
