@@ -15,15 +15,18 @@
 ## 三步开始
 
 ```bash
-# 1) 下载发布页里的 .run（或 git clone 后跳过这步）
-curl -fsSLO https://github.com/lglglglgy/dsh-route/releases/latest/download/dsh-route-0.1.4.run
+# 1) 取最新版本号并下载（不用记版本）
+V=$(curl -fsSL https://api.github.com/repos/lglglglgy/dsh-route/releases/latest \
+      | grep -m1 '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+curl -fsSLO "https://github.com/lglglglgy/dsh-route/releases/latest/download/dsh-route-$V.run"
 
-# 2) 安装并启动（装在用户目录，不需要 root）
-chmod +x dsh-route-0.1.4.run && ./dsh-route-0.1.4.run
+# 2) 安装并启动（装在用户目录，不需要 root；会提示一次管理员密码/UAC 写访问别名）
+chmod +x "dsh-route-$V.run" && "./dsh-route-$V.run"
 
-# 3) 浏览器打开（装的时候会自动配好 dsh.local 这个别名）
-open http://dsh.local:3090/      # 没有别名时用 http://127.0.0.1:3090/
+# 3) 浏览器打开（别名一般已自动配好）
+open "http://dsh.local:3090/"      # 没配上时用 http://localhost:3090/
 ```
+（也可以直接从 [发布页](https://github.com/lglglglgy/dsh-route/releases/latest) 手动下载对应版本的 `.run`。）
 
 装完之后**像平常一样 `ssh` 到你那些机器**就行——面板上会自动出现它们，不用维护任何主机清单。
 
