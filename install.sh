@@ -389,8 +389,40 @@ if [ "$DRY" = 0 ]; then printf '%s\n' "$SERVICE_KIND" > "$PREFIX/.service-kind";
 # ── 访问别名：写 hosts，让地址变成 http://dsh.local:3090/ ──
 HOSTS_APPLIED=0
 HOSTS_WIN_APPLIED=0
+DESKTOP_CMD=""
 
 # WSL：Windows 的 hosts 才是"浏览器真正用的那份"（WSL 的每次启动会重建）
+# macOS：sudo 默认只认密码；系统授权框（osascript）支持 Touch ID。
+# 授权框必须在用户图形会话里，所以生成桌面文件并在图形会话打开它。
+mac_write_authorize_command() {   # $1=目标文件
+  cat > "$1" <<CMDEOF
+#!/bin/bash
+# dsh-route：把访问别名写进 /etc/hosts（走系统授权框，可直接用 Touch ID）
+set -u
+ALIAS="${HOST_ALIAS:-dsh.local}"
+PORT="${CTL:-3090}"
+HOSTS="${HOSTS_FILE:-/etc/hosts}"
+NEW="\$(mktemp)"
+grep -v '# dsh-route' "\$HOSTS" > "\$NEW" 2>/dev/null || cp "\$HOSTS" "\$NEW"
+printf '127.0.0.1\t%s\t# dsh-route\n::1\t%s\t# dsh-route\n' "\$ALIAS" "\$ALIAS" >> "\$NEW"
+B64="\$(base64 < "\$NEW" | tr -d '\\n')"
+rm -f "\$NEW"
+echo "dsh-route：把 \$ALIAS 指向 127.0.0.1"
+echo "接下来会弹系统授权框 —— 可以直接用 Touch ID（指纹）"
+echo
+if osascript -e "do shell script \"printf %s '\$B64' | base64 -D > '\$HOSTS'\" with administrator privileges"; then
+  echo "✓ 已写入 \$HOSTS"
+  printf "  http://%s:%s/ -> " "\$ALIAS" "\$PORT"
+  curl -s -m 5 -o /dev/null -w "%{http_code}\\n" "http://\$ALIAS:\$PORT/"
+else
+  echo "✗ 授权被取消，未改动 \$HOSTS"
+fi
+echo
+echo "（这个窗口可以直接关掉）"
+CMDEOF
+  chmod +x "$1"
+}
+
 win_ps1_write() {   # add|remove
   if [ "$1" = remove ]; then
     cat > "$WIN_PS1" <<'PSEOF'
@@ -477,6 +509,31 @@ apply_host_alias() {
     cat "$tmp" > "$HOSTS_FILE"
   elif sudo -n true 2>/dev/null; then
     sudo cp "$tmp" "$HOSTS_FILE"
+  elif [ "$(uname -s)" = Darwin ] && [ "$DRY" = 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] \
+       && command -v open >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1 \
+       && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+    # macOS：生成桌面授权文件并在图形会话打开（系统授权框支持 Touch ID）
+    cmd_file="$HOME/Desktop/dsh-route-写入hosts.command"
+    rm -f "$tmp"
+    mac_write_authorize_command "$cmd_file"
+    DESKTOP_CMD="$cmd_file"
+    if open -a Terminal "$cmd_file" 2>/dev/null; then
+      say "已打开授权窗口：$cmd_file"
+      say "在弹框里用 Touch ID（或密码）确认一次，之后 http://$HOST_ALIAS:${CTL:-3090}/ 永久可用"
+      i=0
+      while [ $i -lt 25 ]; do
+        sleep 1; i=$((i + 1))
+        if grep -q "$HOST_ALIAS" "$HOSTS_FILE" 2>/dev/null; then HOSTS_APPLIED=1; break; fi
+      done
+      if [ "$HOSTS_APPLIED" = 1 ]; then
+        say "访问别名已写入 ${HOSTS_FILE}：$HOST_ALIAS"
+      else
+        say "还没写入；桌面上的 $cmd_file 可以再双击一次"
+      fi
+      return 0
+    fi
+    say "没能自动打开授权窗口，请双击桌面上的：$cmd_file"
+    return 0
   elif [ -t 0 ] && [ -z "${DSH_ROUTE_NO_PROMPT:-}" ] && command -v sudo >/dev/null 2>&1; then
     # 交互式安装：直接要一次密码写进去（非交互场景不会走到这里，免得卡住）
     say "写 ${HOSTS_FILE} 需要管理员权限，下面会提示输入密码（不想改就 Ctrl-C 后加 --no-host-alias）"
@@ -533,6 +590,7 @@ if [ "$DRY" = 0 ]; then
     printf 'hosts_file=%s\n'   "$HOSTS_FILE"
     printf 'hosts_applied=%s\n' "$HOSTS_APPLIED"
     printf 'hosts_windows=%s\n' "$HOSTS_WIN_APPLIED"
+    printf 'desktop_command=%s\n' "$DESKTOP_CMD"
     printf 'files=daemon.py ui.html assets/ VERSION README.md\n'
   } > "$PREFIX/MANIFEST"
 fi
