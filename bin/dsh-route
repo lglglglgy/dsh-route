@@ -269,6 +269,23 @@ PSEOF
   fi
 }
 
+# macOS：用图形管理员授权框写 hosts（终端里 sudo 也会问，但图形框更省事，远程也能触发）
+hosts_write_with_admin() {   # $1=内容文件 $2=目标
+  local src="$1" dst="$2" b64 cmd
+  command -v osascript >/dev/null 2>&1 || return 1
+  [[ $(uname -s) == Darwin ]] || return 1
+  launchctl print "gui/$(id -u)" >/dev/null 2>&1 || return 1
+  b64=$(base64 < "$src" | tr -d '\n')
+  cmd="printf %s '$b64' | base64 -D > '$dst'"
+  osascript -e "do shell script \"$cmd\" with administrator privileges" >/dev/null 2>&1
+}
+
+# 免授权的域名类似物：dsh.local -> dsh.localhost（macOS/Linux/WSL 都会解析到回环）
+dot_localhost_url() {
+  local first; first="$(alias_name)"; first="${first%%.*}"
+  printf 'http://%s.localhost:%s/' "$first" "$CTL"
+}
+
 host_alias_cmd() {
   local mode="${1:-add}" name="${2:-}" hf tmp
   [[ $mode == remove ]] || name="${name:-$(alias_name)}"
@@ -285,8 +302,13 @@ host_alias_cmd() {
   fi
   if [[ -w $hf ]]; then
     cat "$tmp" > "$hf"
+  elif [[ $(uname -s) == Darwin ]] && hosts_write_with_admin "$tmp" "$hf"; then
+    echo "  已通过管理员授权写入"
+  elif sudo -n true 2>/dev/null; then
+    sudo cp "$tmp" "$hf"
   else
-    sudo cp "$tmp" "$hf" || { rm -f "$tmp"; die "写入 $hf 失败（需要 sudo）"; }
+    echo "  需要管理员权限，接下来会提示输入密码（Ctrl-C 可取消）" >&2
+    sudo cp "$tmp" "$hf" || { rm -f "$tmp"; die "写入 $hf 失败；也可以用一个免授权的地址：$(dot_localhost_url)"; }
   fi
   rm -f "$tmp"
   if [[ $mode == remove ]]; then

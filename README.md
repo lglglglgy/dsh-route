@@ -43,13 +43,16 @@ open http://dsh.local:3090/      # 没有别名时用 http://127.0.0.1:3090/
 
 | 地址 | 说明 |
 | --- | --- |
-| `http://dsh.local:3090/` | 默认别名，安装时自动写进 hosts（WSL 里会弹一次 UAC 写 Windows 的 hosts，因为浏览器在 Windows 侧） |
+| `http://dsh.localhost:3090/` | **零授权**：macOS / Linux / WSL 都会把 `*.localhost` 解析到回环，开箱即用（Windows 不解析，那边用下一个） |
+| `http://dsh.local:3090/` | 默认别名，安装时自动写 hosts；WSL 里会弹一次 UAC 写 Windows 的 hosts（浏览器在 Windows 侧） |
 | `http://localhost:3090/` | 所有系统都能用（同时监听 IPv4 与 IPv6 回环） |
 | `http://127.0.0.1:3090/` | 一直都可用；**点进某台机器的 dsh web 时请用这个**（远端信任栅栏按 Host 判定） |
 
-别名可以随时改或移除：
+别名没写进 hosts 时（例如 macOS 用户级服务没权限），面板和 `dsh-route status` 会告诉你原因，
+并给出上面那个免授权地址。随时可以补写、改名或移除：
 
 ```bash
+dsh-route host-alias               # 写 /etc/hosts（会问一次密码；macOS 弹图形授权框）
 dsh-route host-alias my.dsh        # 换成 my.dsh
 dsh-route host-alias --remove      # 移除
 dsh-route host-alias --windows     # WSL：写 Windows 的 hosts（弹一次 UAC）

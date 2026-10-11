@@ -465,6 +465,8 @@ apply_host_alias() {
     say "没改 ${HOSTS_FILE}（需要管理员权限）。想用 http://$HOST_ALIAS:${CTL:-3090}/ ："
     say "    dsh-route host-alias            # 会提示输入密码"
     say "    echo '127.0.0.1 $HOST_ALIAS' | sudo tee -a $HOSTS_FILE"
+    dot="${HOST_ALIAS%%.*}.localhost"
+    say "  零授权替代：http://${dot}:${CTL:-3090}/（macOS/Linux/WSL 都解析 *.localhost）"
     if is_wsl; then
       say "  WSL 提示：/etc/hosts 每次启动会重建，建议写到 Windows 那份（浏览器在 Windows 上也是这份）："
       say "    dsh-route host-alias --windows   # 会弹一次 UAC"

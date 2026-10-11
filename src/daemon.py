@@ -1538,16 +1538,25 @@ def alias_loop() -> None:
 
 
 def friendly_url() -> dict:
-    """给界面/命令行用的访问地址：优先 hosts 别名，其次 localhost（双栈已监听）。"""
+    """给界面/命令行用的访问地址：优先 hosts 别名，其次 localhost（双栈已监听）。
+
+    还有个"零授权"的域名类似物：`<别名>.localhost` —— macOS/Linux/WSL 会把它解析到回环，
+    不需要写 hosts（Windows 侧不解析，那边要用 hosts 别名）。
+    """
     port = int(CONFIG["CONTROL_PORT"])
     alias = host_alias()
     local = "http://localhost:%d/" % port
+    dot_name = "%s.localhost" % alias.split(".")[0] if alias else ""
+    dot = ("http://%s:%d/" % (dot_name, port)) if dot_name and alias_resolves(dot_name) else ""
     ok = bool(ALIAS_STATE.get("ok")) or alias_in_hosts(alias)
     note = str(ALIAS_STATE.get("note") or ("已在 hosts 里" if ok else "未写进 hosts"))
     if alias and ok:
-        return {"url": "http://%s:%d/" % (alias, port), "url_local": local,
+        return {"url": "http://%s:%d/" % (alias, port), "url_local": local, "url_dot_localhost": dot,
                 "host_alias": alias, "alias_ok": True, "alias_note": note}
+    if not ok and dot:
+        note = f"{note}；免授权地址可用：{dot}"
     return {"url": local, "url_local": local, "url_ip": "http://127.0.0.1:%d/" % port,
+            "url_dot_localhost": dot,
             "host_alias": alias, "alias_ok": False, "alias_note": note}
 
 
