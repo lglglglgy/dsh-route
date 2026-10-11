@@ -1,5 +1,19 @@
 # 变更记录
 
+## 0.1.4
+
+- **访问别名三层自动**：
+  - 安装时：交互式跑 `.run` 会提示输入一次密码写 `/etc/hosts`；WSL 里还会**自动弹一次 UAC**
+    把别名写进 **Windows 的 hosts**（`--windows-hosts` 强制、`--no-windows-hosts` 跳过、
+    `DSH_ROUTE_NO_PROMPT=1` 禁止提问）；非交互场景只打印命令，不会卡住。
+  - 运行时：守护进程**启动时 + 每 5 分钟**检查别名在不在，不在就补回来（`ensure_host_alias`）。
+    装成系统服务（`./install.sh --system`，root）时全自动——WSL 每次启动重建 `/etc/hosts`
+    也会被服务补回；用户级服务没权限时只在 `status` 与页面上提示原因。
+  - 手动：`dsh-route host-alias [NAME]`、`--windows`（弹 UAC 写 Windows）、`--remove` / `--windows-remove`。
+  - 卸载：`/etc/hosts` 与 **Windows hosts** 里带 `# dsh-route` 标记的行都会清掉（后者同样一次 UAC）。
+- 文档补充：从 Windows 浏览器访问 WSL 服务时 `localhost` 会被解析成 `::1`（WSL 转发是 IPv4），
+  请用 `127.0.0.1:3090` 或 `dsh.local:3090`。
+
 ## 0.1.3
 
 - **访问地址不再是"127.0.0.1:3090"这一种**：

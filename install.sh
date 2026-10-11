@@ -433,7 +433,7 @@ apply_host_alias_windows() {
     if win_ps1_run_elevated; then
       if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
         HOSTS_WIN_APPLIED=1
-        say "Windows hosts 已写入：$HOST_ALIAS（卸载时会移除）"
+        say "Windows hosts 已写入：${HOST_ALIAS}（卸载时会移除）"
       else
         warn "UAC 已确认但没读到写入结果，可稍后跑 dsh-route host-alias --windows"
       fi
@@ -481,7 +481,7 @@ apply_host_alias() {
     if sudo cp "$tmp" "$HOSTS_FILE"; then
       rm -f "$tmp"
       HOSTS_APPLIED=1
-      say "访问别名已写入 ${HOSTS_FILE}：$HOST_ALIAS（带 $HOSTS_MARK 标记，卸载时移除）"
+      say "访问别名已写入 ${HOSTS_FILE}：${HOST_ALIAS}（带 $HOSTS_MARK 标记，卸载时移除）"
       return 0
     fi
     warn "sudo 没成功，跳过别名"

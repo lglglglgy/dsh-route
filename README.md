@@ -154,10 +154,23 @@ dsh-route uninstall        # 卸载
 | 地址 | 说明 |
 | --- | --- |
 | `http://localhost:3090/` | 默认，所有系统都能用（双栈监听，`localhost` 解析成 IPv4 或 IPv6 都行） |
-| `http://dsh.local:3090/` | 需要 `/etc/hosts` 别名：安装时若没有免密 sudo 会打印一行命令，或随时 `dsh-route host-alias` |
+| `http://dsh.local:3090/` | 需要 hosts 别名：安装时自动写（会问一次密码/UAC），运行中由服务自愈，也可随时 `dsh-route host-alias` |
 | `http://127.0.0.1:3090/` | 一直可用 |
 
 别名用的是 `HOST_ALIAS`（默认 `dsh.local`），写进 hosts 时带 `# dsh-route` 标记，**卸载时会自动移除**。
+
+写 hosts 是"三层自动"，都不用你记路径：
+
+1. **安装时**：终端里交互式跑 `.run` —— `/etc/hosts` 会提示输入一次密码；在 WSL 里还会**自动弹一次 UAC**
+   把别名写进 **Windows 的 hosts**（浏览器真正用的就是这份）。非交互场景只打印命令，不会卡住。
+2. **服务运行时**：守护进程启动时 + 每 5 分钟检查一次，别名不在就补回来。
+   装成系统服务（`./install.sh --system`，以 root 运行）时这一步**全自动**——WSL 每次启动会重建
+   `/etc/hosts`，服务起来后会自己补上；用户级服务没权限，则在 `dsh-route status` 与页面上提示原因。
+3. **手动**：`dsh-route host-alias`（写 `/etc/hosts`）、`dsh-route host-alias --windows`（弹 UAC 写 Windows 的）、
+   `--remove` / `--windows-remove` 移除。
+
+相关开关：`--host-alias NAME`、`--no-host-alias`、`--windows-hosts`（强制弹 UAC）、`--no-windows-hosts`、
+`DSH_ROUTE_NO_PROMPT=1`（禁止任何提问）。
 
 > 只有"点进某台机器的 dsh web"那一步必须用 `127.0.0.1`（远端的信任栅栏按 Host 判定）；
 > 控制页本身用哪个地址都可以。WSL 里 `/etc/hosts` 每次启动会重建，建议把别名加到
