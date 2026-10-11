@@ -80,15 +80,30 @@ DSH_ROUTE_UNIT_DIR=/tmp/nb DSH_ROUTE_STATE_DIR=/tmp/nb/state \
 edit_in_place /tmp/nb/config/config 's/^BASE_PORT=.*/BASE_PORT=3200/; s/^CONTROL_PORT=.*/CONTROL_PORT=3191/'
 if [ -x /tmp/nb/prefix/run.sh ]; then
   detach_start /tmp/nb/prefix/run.sh
-  sleep 4
-  code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:3191/api/status || true)
-  [ "$code" = "200" ] && ok "兜底进程起来了（3191 控制页 200）" || bad "兜底进程没起来（HTTP ${code}）"
+  # 冷启动的 CI 机器可能慢：轮询等待，别用固定 sleep（会 flaky）
+  code=000
+  for _ in $(seq 1 20); do
+    sleep 1
+    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:3191/api/status || true)
+    [ "$code" = "200" ] && break
+  done
+  if [ "$code" = "200" ]; then
+    ok "兜底进程起来了（3191 控制页 200）"
+  else
+    bad "兜底进程没起来（HTTP ${code}）"
+    tail -6 /tmp/nb/state/daemon.log 2>/dev/null | sed 's/^/      /'
+  fi
   DSH_ROUTE_PREFIX=/tmp/nb/prefix DSH_ROUTE_CONFIG=/tmp/nb/config/config bin=/tmp/nb/bin/dsh-route
   DSH_ROUTE_PREFIX=/tmp/nb/prefix DSH_ROUTE_CONFIG=/tmp/nb/config/config \
     DSH_ROUTE_STATE=/tmp/nb/state /tmp/nb/bin/dsh-route where 2>/dev/null | head -3 | sed 's/^/      /'
   pkill -f "/tmp/nb/prefix/daemon.py" 2>/dev/null || true
-  sleep 1
-  code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:3191/api/status || true)
+  # 同样轮询等待端口关闭
+  code=000
+  for _ in $(seq 1 10); do
+    sleep 1
+    code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:3191/api/status || true)
+    [ "$code" != "200" ] && break
+  done
   [ "$code" != "200" ] && ok "已停掉（端口不再响应）" || bad "进程没停干净"
 else
   bad "没有生成 run.sh"
