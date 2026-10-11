@@ -423,7 +423,7 @@ apply_host_alias_windows() {
   [ "$DRY" = 0 ] || return 0
   [ -x "$WIN_PS" ] && [ -d /mnt/c/Windows/Temp ] || return 0      # 不是 WSL 就算了
   if grep -q "$HOST_ALIAS" "$WIN_HOSTS" 2>/dev/null; then
-    say "Windows hosts 里已有 $HOST_ALIAS"
+    say "Windows hosts 里已有 $HOST_ALIAS（永久有效，不需要再弹 UAC）"
     HOSTS_WIN_APPLIED=1
     return 0
   fi
