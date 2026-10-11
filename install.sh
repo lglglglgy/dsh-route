@@ -489,6 +489,11 @@ apply_host_alias() {
     warn "找不到 ${HOSTS_FILE}，跳过别名"
     return 0
   fi
+  if grep -q "$HOST_ALIAS" "$HOSTS_FILE" 2>/dev/null; then
+    say "访问别名已在 ${HOSTS_FILE} 里：${HOST_ALIAS}（不需要再授权）"
+    HOSTS_APPLIED=1
+    return 0
+  fi
   tmp="$(mktemp)"
   grep -v "$HOSTS_MARK" "$HOSTS_FILE" > "$tmp" 2>/dev/null || cp "$HOSTS_FILE" "$tmp" 2>/dev/null || : > "$tmp"
   printf '127.0.0.1\t%s\t%s\n::1\t%s\t%s\n' "$HOST_ALIAS" "$HOSTS_MARK" "$HOST_ALIAS" "$HOSTS_MARK" >> "$tmp"
