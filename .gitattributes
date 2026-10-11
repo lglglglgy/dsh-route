@@ -1,0 +1,11 @@
+# 统一用 LF：脚本要能在 Linux/macOS 上直接跑，别让 Windows 的 CRLF 混进来
+* text=auto eol=lf
+
+# 二进制
+*.woff2 binary
+*.png binary
+*.run binary
+*.tar.gz binary
+
+# 生成物（也走 diff 保护）
+dist/** linguist-generated=true

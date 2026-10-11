@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- dsh-route 的 launchd 用户代理（macOS）：安装到 ~/Library/LaunchAgents/ -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dshroute.agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>@PREFIX@/daemon.py</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>DSH_ROUTE_PREFIX</key>
+    <string>@PREFIX@</string>
+    <key>DSH_ROUTE_CONFIG</key>
+    <string>@CONFIGDIR@/config</string>
+    <key>DSH_ROUTE_KEY_FILE</key>
+    <string>@CONFIGDIR@/deepseek.key</string>
+    <key>DSH_ROUTE_STATE</key>
+    <string>@STATEDIR@</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/dsh-route.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/dsh-route.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>@HOME@</string>
+</dict>
+</plist>

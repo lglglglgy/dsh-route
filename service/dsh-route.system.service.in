@@ -1,0 +1,25 @@
+[Unit]
+Description=dsh-route（远端 dsh web 路由台，系统级）
+Documentation=file:@PREFIX@/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+RuntimeDirectory=dsh-route
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/dsh-route
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=DSH_ROUTE_PREFIX=@PREFIX@
+Environment=DSH_ROUTE_CONFIG=@CONFIGDIR@/config
+Environment=DSH_ROUTE_KEY_FILE=@CONFIGDIR@/deepseek.key
+Environment=DSH_ROUTE_STATE=@STATEDIR@
+ExecStart=@PYTHON@ @PREFIX@/daemon.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

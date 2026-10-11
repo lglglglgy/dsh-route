@@ -1,0 +1,25 @@
+[Unit]
+Description=dsh-route（自动发现当前连接的远端 dsh web，多端口验证并保活转发）
+Documentation=file:@PREFIX@/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 日志走 journal（守护进程自己还会往 $XDG_RUNTIME_DIR/dsh-route/daemon.log 写一份）。
+# 不要用 StandardOutput=append:%t/...：systemd 打开该文件比建目录更早，目录被删过就再也起不来。
+RuntimeDirectory=dsh-route
+RuntimeDirectoryMode=0700
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=DSH_ROUTE_PREFIX=@PREFIX@
+Environment=DSH_ROUTE_CONFIG=@CONFIGDIR@/config
+Environment=DSH_ROUTE_KEY_FILE=@CONFIGDIR@/deepseek.key
+Environment=DSH_ROUTE_STATE=@STATEDIR@
+ExecStart=@PYTHON@ @PREFIX@/daemon.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

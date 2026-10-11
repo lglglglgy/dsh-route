@@ -1,0 +1,73 @@
+name: Release
+
+# 推 tag 就自动构建并发布：git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建并发布 .run / .tar.gz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tag 必须与 VERSION 一致
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(tr -d '[:space:]' < VERSION)"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag v$tag 与 VERSION $ver 不一致：先改 VERSION 再打 tag"
+            exit 1
+          fi
+          echo "版本 $ver"
+
+      - name: 构建
+        run: bash dist.sh
+
+      - name: 产物自检（自解压 + 沙箱装/卸，全隔离）
+        run: bash tests/release-check.sh "dist/dsh-route-$(tr -d '[:space:]' < VERSION).run"
+
+      - name: 校验和自检
+        run: |
+          cd dist
+          for f in *.sha256; do sha256sum -c "$f"; done
+
+      - name: 汇总产物清单
+        run: |
+          {
+            echo "## 下载"
+            echo
+            echo "| 文件 | 大小 | sha256 |"
+            echo "| --- | --- | --- |"
+            for f in dist/*.run dist/*.tar.gz; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) | \`$(sha256sum "$f" | cut -c1-16)…\` |"
+            done
+            echo
+            echo "## 安装"
+            echo
+            echo '```bash'
+            echo "./dsh-route-$(tr -d '[:space:]' < VERSION).run        # 安装/升级"
+            echo "./dsh-route-$(tr -d '[:space:]' < VERSION).run --check    # 只体检"
+            echo '```'
+            echo
+            echo "Linux（systemd --user / 系统级）、WSL、macOS（launchd）均支持；卸载用 \`dsh-route uninstall\`。"
+          } > RELEASE_BODY.md
+          cat RELEASE_BODY.md
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: dsh-route ${{ github.ref_name }}
+          body_path: RELEASE_BODY.md
+          generate_release_notes: true
+          files: |
+            dist/*.run
+            dist/*.run.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          fail_on_unmatched_files: true

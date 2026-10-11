@@ -1,0 +1,31 @@
+# dsh-route 配置（KEY=VALUE，# 后面是注释；改完 systemctl --user restart dsh-route 生效）
+
+# ── 转发端口 ────────────────────────────────────────────────
+BASE_PORT=3080                # 本地端口从这个值开始往上分配（每台机器每个远端端口各占一个）
+REMOTE_PORTS=3080,3081,3082   # 远端候选端口：逐个验证，必须返回 401 + "dsh web authentication required" 才转发
+                              # （其它 HTTP 服务会被识别为"非 dsh"并跳过，不建立隧道）
+REMOTE_PORT=3080              # 兼容项：会并进上面的候选列表并排在最前
+
+# ── 发现与探测 ──────────────────────────────────────────────
+POLL=5                        # 发现 + 探测周期（秒）
+PROBE_TIMEOUT=8               # 单机探测超时（秒）
+TOKEN_TTL=90                  # dsh web token 复验间隔（秒）
+# POWERSHELL=                 # 手动指定 Windows PowerShell 路径（一般不用填，会自动找）
+# EXTRA_EXCLUDE="a b"         # 忽略这些 ssh 目标
+
+# ── 控制页 / 指标 ───────────────────────────────────────────
+CONTROL_PORT=3090             # 控制页与 API（只监听 127.0.0.1）
+METRICS_POLL=30               # 余额/状态/用量刷新间隔（秒）
+USAGE_DAYS=7                  # "近期使用"统计天数
+
+# ── 远端会话 ────────────────────────────────────────────────
+SESSION_POLL=45               # 会话详情抓取间隔（秒）
+SESSION_LIMIT=3               # 每台机器看最近几个会话
+# DSH_HOME=                   # 远端 DSH_HOME；留空则自动探测常见路径
+
+# ── DeepSeek 余额 / 状态 ────────────────────────────────────
+# DEEPSEEK_API_KEY=           # 也可以放 ~/.config/dsh-route/deepseek.key（推荐，权限 600）
+API_BASE=https://api.deepseek.com
+STATUS_URL=https://status.deepseek.com/
+# PROXY=                      # 形如 http://127.0.0.1:7890：本机直连受限时（例如 TLS 被中间设备重置）
+                              # 让状态页/接口走代理；不填也会自动读 HTTPS_PROXY 环境变量

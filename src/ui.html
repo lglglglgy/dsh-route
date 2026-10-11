@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSH WEB ROUTE</title>
+<style>
+/* 自带的圆润字体（Nunito 正文 / Quicksand 标题），从 /assets/ 本地提供 */
+@font-face{font-family:"DSH Display";src:url("/assets/quicksand-500.woff2") format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"DSH Display";src:url("/assets/quicksand-600.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"DSH Rounded";src:url("/assets/nunito-400.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"DSH Rounded";src:url("/assets/nunito-600.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"DSH Rounded";src:url("/assets/nunito-700.woff2") format("woff2");font-weight:700;font-display:swap}
+
+:root{
+  --font-display:"DSH Display","DSH Rounded",system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif;
+  --font-body:"DSH Rounded",system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,"JetBrains Mono",Consolas,monospace;
+  --win:#15161b; --win-side:#111217; --win-bar:#1b1c22;
+  --s1:hsla(0,0%,100%,.07); --s2:hsla(0,0%,100%,.045); --s3:hsla(0,0%,100%,.025); --hover:hsla(0,0%,100%,.1);
+  --line:hsla(0,0%,100%,.11); --line-soft:hsla(0,0%,100%,.07); --line-strong:hsla(0,0%,100%,.22);
+  --t1:#fff; --t2:hsla(0,0%,100%,.82); --t3:hsla(0,0%,100%,.58); --t4:hsla(0,0%,100%,.36);
+  --blue:#4d6bfe; --blue-2:#7a9bf0; --blue-ink:#a8bcff;
+  --green:#3ddc97; --amber:#ffc14d; --red:#ff6b6b;
+  --r-win:20px; --r-card:20px; --r-item:12px; --r-pill:100px;
+  --ink:#141a2e; --ink-2:rgba(20,26,46,.66); --ink-3:rgba(20,26,46,.42);
+  --glass:linear-gradient(180deg,rgba(20,22,32,.62),rgba(20,22,32,.46));
+  --glass-line:rgba(255,255,255,.16);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#07080f}
+body{color:var(--t1);font-family:var(--font-body);font-size:14.5px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--blue-ink);text-decoration:none}
+a:hover{text-decoration:none}
+button{font:inherit}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* 动态背景：三层一起动（全部只用 transform，走合成器，开销低）
+   ① .wash 明暗主结构：层放大到 170vh 再上下滑动 → 亮暗分界线整体扫动
+   ② .bg-blobs 彩色光团  ③ .bg-sheen 明暗光带（都在洗色层之上/之下） */
+.wash{position:fixed;left:0;right:0;top:-30vh;height:170vh;z-index:0;pointer-events:none;
+  background-image:linear-gradient(180deg,
+      rgba(244,246,255,.9) 0%,
+      rgba(233,238,255,.88) 10%,
+      rgba(213,221,250,.86) 20%,
+      rgba(170,183,230,.84) 32%,
+      rgba(109,121,181,.84) 45%,
+      rgba(59,66,114,.88) 58%,
+      rgba(30,35,67,.92) 70%,
+      rgba(17,22,49,.95) 82%,
+      rgba(7,8,15,.98) 100%);
+  animation:washDrift 27s ease-in-out infinite alternate}
+@keyframes washDrift{
+  0%{transform:translate3d(0,-6.5%,0) scaleY(1.02)}
+  100%{transform:translate3d(0,6.5%,0) scaleY(1.06)}}
+.bg-blobs{position:fixed;inset:-13%;z-index:0;pointer-events:none;
+  background-image:
+    radial-gradient(32% 28% at 16% 60%, rgba(101,142,255,.95), rgba(101,142,255,0) 70%),
+    radial-gradient(28% 24% at 84% 34%, rgba(255,150,210,.7), rgba(255,150,210,0) 70%),
+    radial-gradient(34% 30% at 62% 86%, rgba(90,225,255,.8), rgba(90,225,255,0) 70%),
+    radial-gradient(26% 22% at 10% 92%, rgba(150,120,255,.75), rgba(150,120,255,0) 70%);
+  -webkit-mask-image:linear-gradient(180deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,.6) 14%, #000 34%, #000 100%);
+  mask-image:linear-gradient(180deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,.6) 14%, #000 34%, #000 100%);
+  animation:drift1 19s ease-in-out infinite alternate}
+.bg-sheen{position:fixed;inset:-18%;z-index:0;pointer-events:none;
+  background-image:
+    radial-gradient(34% 30% at 26% 34%, rgba(255,255,255,.42), rgba(255,255,255,0) 72%),
+    radial-gradient(32% 28% at 76% 62%, rgba(0,0,0,.5), rgba(0,0,0,0) 72%),
+    radial-gradient(26% 24% at 12% 82%, rgba(255,255,255,.3), rgba(255,255,255,0) 72%),
+    radial-gradient(30% 26% at 88% 14%, rgba(0,0,0,.34), rgba(0,0,0,0) 72%);
+  -webkit-mask-image:linear-gradient(180deg, rgba(0,0,0,.3) 0%, rgba(0,0,0,.7) 8%, #000 22%, #000 100%);
+  mask-image:linear-gradient(180deg, rgba(0,0,0,.3) 0%, rgba(0,0,0,.7) 8%, #000 22%, #000 100%);
+  animation:drift2 16s ease-in-out infinite alternate}
+@keyframes drift1{
+  0%{transform:translate3d(-18%,-14%,0) scale(1.06)}
+  50%{transform:translate3d(16%,14%,0) scale(1.22)}
+  100%{transform:translate3d(9%,-18%,0) scale(1.12)}}
+@keyframes drift2{
+  0%{transform:translate3d(16%,-12%,0) scale(1.05)}
+  50%{transform:translate3d(-18%,14%,0) scale(1.24)}
+  100%{transform:translate3d(-12%,-16%,0) scale(1.14)}}
+@media (prefers-reduced-motion:reduce){.wash,.bg-blobs,.bg-sheen{animation:none}}
+.shell{position:relative;z-index:1}
+
+/* ---------- 顶部已移除，只保留悬浮玻璃条与窗口内的齿轮 ---------- */
+.icon-btn{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;cursor:pointer;
+  background:rgba(255,255,255,.65);border:1px solid rgba(20,26,46,.12);color:var(--ink-2);
+  transition:background .15s ease,transform .15s ease}
+.icon-btn:hover{background:rgba(255,255,255,.92);transform:translateY(-1px)}
+.icon-btn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7}
+.win-gear{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;cursor:pointer;flex:none;
+  background:hsla(0,0%,100%,.08);border:1px solid hsla(0,0%,100%,.14);color:hsla(0,0%,100%,.72);
+  transition:background .15s ease,color .15s ease,transform .15s ease}
+.win-gear:hover{background:hsla(0,0%,100%,.18);color:#fff;transform:rotate(18deg)}
+.win-gear svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7}
+
+/* 悬浮磨砂玻璃标题条：跟随页面宽度，两边只留一点空间 */
+.floatbar{position:fixed;top:14px;left:50%;width:calc(100% - 44px);z-index:30;
+  display:flex;align-items:center;gap:14px;padding:10px 18px 10px 14px;border-radius:var(--r-pill);
+  background:var(--glass);border:1px solid var(--glass-line);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 12px 34px rgba(4,6,18,.42);
+  transform:translate(-50%,-140%) scale(.96);opacity:0;pointer-events:none;visibility:hidden;
+  transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .26s ease,visibility .34s}
+/* 磨砂只在实际显示时才启用，避免隐藏状态下仍参与合成 */
+.floatbar.show{transform:translate(-50%,0) scale(1);opacity:1;pointer-events:auto;visibility:visible;
+  backdrop-filter:blur(26px) saturate(180%);-webkit-backdrop-filter:blur(26px) saturate(180%)}
+.floatbar .ftitle{font-family:var(--font-display);font-size:14px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:#fff;white-space:nowrap}
+.floatbar .fstat{display:flex;align-items:center;gap:7px;font-size:12.5px;color:hsla(0,0%,100%,.74);
+  padding:5px 12px;border-radius:var(--r-pill);background:hsla(0,0%,100%,.08);border:1px solid hsla(0,0%,100%,.1)}
+.floatbar .fstat b{font-family:var(--font-mono);color:#fff;font-weight:600}
+.floatbar .spacer{flex:1}
+.floatbar .gbtn{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;cursor:pointer;flex:none;
+  background:hsla(0,0%,100%,.1);border:1px solid hsla(0,0%,100%,.14);color:#fff;transition:background .15s ease}
+.floatbar .gbtn:hover{background:hsla(0,0%,100%,.2)}
+.floatbar .gbtn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7}
+@media (max-width:760px){.floatbar .fstat.hide-sm{display:none}}
+
+/* Hero：粒子标题 */
+.hero{max-width:960px;margin:0 auto;padding:72px 28px 26px;text-align:center}
+.hero-title-wrap{position:relative;width:100%;height:clamp(62px,7.4vw,102px);margin:0 0 14px}
+.hero-title-wrap::before{content:"";position:absolute;inset:-26px -6%;z-index:0;pointer-events:none;
+  background:radial-gradient(58% 62% at 50% 50%, rgba(255,255,255,.6), rgba(255,255,255,0) 72%)}
+#title-particles{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);
+  white-space:nowrap;border:0}
+h1{font-family:var(--font-display);font-weight:600;letter-spacing:.01em;line-height:1.1;font-size:clamp(34px,4.6vw,60px);
+  color:var(--ink);margin:0 0 16px;text-transform:uppercase}
+.lede{font-size:15px;color:var(--ink-2);margin:0 auto}
+
+/* 窗口：机器多时自动加长，超过上限后列表滚动 */
+.window{max-width:1240px;margin:22px auto 0;background:var(--win);border:1px solid var(--line);
+  border-radius:var(--r-win);overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 40px 90px rgba(8,10,26,.5)}
+.win-bar{display:flex;align-items:center;gap:12px;height:46px;padding:0 16px;background:var(--win-bar);
+  border-bottom:1px solid var(--line-soft);flex:none}
+.lights{display:flex;gap:8px}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.win-title{flex:1;text-align:center;font-size:13px;color:var(--t3);font-family:var(--font-mono)}
+.win-body{display:grid;grid-template-columns:276px minmax(0,1fr);min-height:432px}
+@media (max-width:880px){.win-body{grid-template-columns:1fr}}
+.sidebar{background:var(--win-side);border-right:1px solid var(--line-soft);padding:14px 12px;display:flex;
+  flex-direction:column;gap:8px;overflow:hidden}
+/* 机器/会话多时窗口自动加长，超过 --pane-max 后列表内部滚动 */
+#hosts{--pane-max:min(calc(80vh - 140px),800px);flex:1;min-height:0;max-height:var(--pane-max);overflow:auto;
+  display:flex;flex-direction:column;gap:6px;padding-right:2px}
+.host{display:block;padding:10px;border-radius:12px;border:1px solid transparent;transition:background .15s ease;flex:none}
+.host:hover{background:var(--s2)}
+.host-name{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:13.5px;color:var(--t1)}
+.host-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:5px;font-size:11px;color:var(--t4)}
+.host-act{display:flex;gap:6px;margin-top:7px}
+.fwds{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.fwd{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:9px;border:1px solid var(--line-soft);
+  background:var(--s3);font-family:var(--font-mono);font-size:11.5px;color:var(--t2)}
+.fwd:hover{background:var(--s1);border-color:var(--line);color:var(--t1)}
+.fwd .rp{color:var(--t1)}.fwd .lp{color:var(--blue-ink)}.fwd .ms{margin-left:auto;color:var(--t4);font-size:10.5px}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:var(--r-pill);font-size:10.5px;
+  border:1px solid var(--line-soft);background:var(--s3);color:var(--t3);white-space:nowrap}
+.tag.blue{border-color:rgba(77,107,254,.45);background:rgba(77,107,254,.16);color:var(--blue-ink)}
+.tag.green{border-color:rgba(61,220,151,.3);background:rgba(61,220,151,.12);color:#9bf0c4}
+.tag.amber{border-color:rgba(255,193,77,.3);background:rgba(255,193,77,.12);color:#ffd894}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;flex:none}
+.dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}
+.dot.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.mono,.kv b,.stats .v,.amount,.up,.sess-tok,.fstat b{font-variant-numeric:tabular-nums}
+.side-foot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid var(--line-soft);display:flex;
+  justify-content:space-between;font-size:11.5px;color:var(--t4);flex:none}
+.main{padding:16px 18px 18px;display:flex;flex-direction:column;gap:12px;min-width:0;overflow:hidden}
+.main-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none}
+.main-title{font-family:var(--font-display);font-size:15px;font-weight:600}
+.main-head .spacer{flex:1}
+#sessions{--pane-max:min(calc(80vh - 140px),800px);flex:1;min-height:0;max-height:var(--pane-max);overflow:auto;
+  display:flex;flex-direction:column;gap:6px}
+.sess-host{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t4);margin:8px 0 2px;position:sticky;top:0;background:var(--win);padding:4px 0;z-index:1}
+.sess-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 13px;
+  border:1px solid var(--line-soft);border-radius:12px;background:var(--s3);transition:background .15s ease}
+.sess-row:hover{background:var(--s2);border-color:var(--line)}
+.sess-title{font-size:13.5px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:var(--t4)}
+.sess-right{display:flex;align-items:center;gap:12px}
+.sess-tok{font-family:var(--font-mono);font-size:12.5px;color:var(--t2);text-align:right}
+.sess-tok small{display:block;font-size:10.5px;color:var(--t4)}
+.sess-open{font-size:11.5px;padding:4px 9px;border-radius:var(--r-pill);border:1px solid var(--line);color:var(--t2);
+  background:var(--s2);white-space:nowrap}
+.sess-open:hover{background:var(--hover);color:#fff;border-color:var(--line-strong)}
+.empty{padding:14px 4px;font-size:12.5px;color:var(--t4);line-height:1.7}
+
+/* 路由台 */
+.section{max-width:1240px;margin:44px auto 0}
+.section-head{display:flex;align-items:flex-end;gap:14px;margin-bottom:16px}
+.section-eyebrow{font-family:var(--font-display);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;
+  color:rgba(255,255,255,.42)}
+.section-title{font-family:var(--font-display);font-size:27px;font-weight:600;letter-spacing:-.01em;color:#fff;margin:2px 0 0}
+.section-head .spacer{flex:1}
+.section-hint{font-size:12px;color:rgba(255,255,255,.4)}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+@media (max-width:1000px){.grid{grid-template-columns:1fr}
+  .c-balance,.c-trend,.c-usage,.c-status{grid-column:1!important;grid-row:auto!important}}
+.card{position:relative;background:linear-gradient(180deg,hsla(0,0%,100%,.055),hsla(0,0%,100%,.03));
+  border:1px solid var(--line-soft);border-radius:var(--r-card);padding:18px 19px 17px;overflow:hidden;
+  transition:border-color .2s ease,transform .2s ease}
+.card:hover{border-color:var(--line);transform:translateY(-1px)}
+.card::after{content:"";position:absolute;inset:0 0 auto;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent)}
+/* 左栏：余额 + 走势图；右栏：近期使用（上）+ API 状态（下） */
+.c-balance{grid-column:1/span 6;grid-row:1;display:flex;flex-direction:column}
+.c-usage{grid-column:7/span 6;grid-row:1}
+.c-trend{grid-column:1/span 6;grid-row:2}
+.c-status{grid-column:7/span 6;grid-row:2}
+.card h3{margin:0;font-family:var(--font-display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--t4);font-weight:600}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.amount{font-family:var(--font-display);font-weight:600;font-size:clamp(38px,3.4vw,54px);line-height:1;
+  letter-spacing:-.02em;display:flex;align-items:baseline;gap:10px;margin:4px 0 0}
+.amount .cur{font-size:15px;color:var(--t4);font-family:var(--font-body)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:auto;border-top:1px solid var(--line-soft);padding-top:2px}
+.stats>div{padding:12px 0 2px}
+.stats>div+div{border-left:1px solid var(--line-soft);padding-left:14px}
+.stats .k{display:block;font-size:10.5px;color:var(--t4);letter-spacing:.04em}
+.stats .v{font-family:var(--font-mono);font-size:16px;color:var(--t1)}
+.mini-kv{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--t4)}
+.mini-kv b{font-family:var(--font-mono);color:var(--t2);font-weight:600}
+.pill-ok{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:var(--r-pill);
+  background:rgba(61,220,151,.12);border:1px solid rgba(61,220,151,.3);color:#c6ffe2;font-size:12.5px}
+.pill-ok.bad{background:rgba(255,107,107,.12);border-color:rgba(255,107,107,.32);color:#ffd6d6}
+.pill-ok.warn{background:rgba(255,193,77,.12);border-color:rgba(255,193,77,.34);color:#ffd894}
+.comps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 22px;margin-top:12px}
+@media (max-width:640px){.comps{grid-template-columns:1fr}}
+.comp{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line-soft)}
+.comp .nm{flex:1;font-size:12.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.comp .bar-mini{width:50px;height:4px;border-radius:2px;background:hsla(0,0%,100%,.1);overflow:hidden;flex:none}
+.comp .bar-mini i{display:block;height:100%;background:linear-gradient(90deg,var(--blue-2),var(--green))}
+.comp .up{font-family:var(--font-mono);font-size:12px;color:var(--t1);width:52px;text-align:right}
+.chart{display:flex;align-items:flex-end;gap:9px;height:124px;margin:14px 0 6px}
+.col{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px}
+.bar{width:56%;max-width:26px;min-height:4px;border-radius:8px 8px 3px 3px;position:relative;
+  background:linear-gradient(180deg,var(--blue-2),rgba(77,107,254,.4));transition:height .35s cubic-bezier(.2,.8,.2,1)}
+.bar.today{background:linear-gradient(180deg,#6d86ff,#2e609f)}
+.bar:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+  background:#000;border:1px solid var(--line);color:#fff;font-size:11px;padding:4px 9px;border-radius:8px;white-space:nowrap;z-index:9}
+.col .lbl{font-family:var(--font-mono);font-size:10px;color:var(--t4)}
+.trend{width:100%;height:170px;display:block;margin-top:6px;overflow:visible}
+.trend .line{fill:none;stroke:var(--blue-2);stroke-width:2.4;stroke-linejoin:round;stroke-linecap:round}
+.trend .area{fill:url(#gradTrend)}
+.trend .grid-line{stroke:hsla(0,0%,100%,.07);stroke-width:1}
+.trend .lbl{fill:hsla(0,0%,100%,.36);font-size:10px;font-family:var(--font-mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{font-family:var(--font-mono);font-size:10.5px;padding:3px 9px;border-radius:var(--r-pill);
+  background:var(--s3);border:1px solid var(--line-soft);color:var(--t3)}
+.hint{font-size:11.5px;color:var(--t4);line-height:1.65;margin-top:8px}
+code{font-family:var(--font-mono);font-size:11.5px;background:rgba(0,0,0,.4);border:1px solid var(--line-soft);
+  padding:1px 6px;border-radius:6px;color:var(--t2)}
+
+/* 设置抽屉 */
+.mask{position:fixed;inset:0;background:rgba(4,6,14,.62);backdrop-filter:blur(3px);z-index:40;display:none}
+.mask.on{display:block}
+.settings{position:fixed;top:0;right:0;height:100%;width:min(420px,92vw);background:#101119;border-left:1px solid var(--line);
+  z-index:41;padding:22px;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;gap:16px}
+.settings.on{transform:translateX(0)}
+.settings h2{margin:0;font-family:var(--font-display);font-size:17px;font-weight:600}
+.field{display:flex;flex-direction:column;gap:7px}
+.field label{font-size:12px;color:var(--t3)}
+.field input{background:var(--s2);border:1px solid var(--line);border-radius:var(--r-item);padding:10px 12px;
+  color:var(--t1);font-family:var(--font-mono);font-size:13px;outline:none}
+.field input:focus{border-color:rgba(77,107,254,.7);box-shadow:0 0 0 3px rgba(77,107,254,.16)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:var(--r-pill);
+  padding:9px 16px;font-size:13px;cursor:pointer;border:1px solid transparent;transition:background .15s ease,border-color .15s ease}
+.btn-primary{background:#fff;color:#0a0a0a}
+.btn-primary:hover{background:#e9e9e9}
+.btn-ghost{background:var(--s2);border-color:var(--line);color:var(--t2)}
+.btn-ghost:hover{background:var(--hover);border-color:var(--line-strong);color:var(--t1)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.foot{max-width:1240px;margin:0 auto;padding:26px 28px 70px;display:flex;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;font-size:11.5px;color:rgba(255,255,255,.3)}
+</style></head>
+<body>
+<div class="bg-blobs" aria-hidden="true"></div>
+<div class="wash" aria-hidden="true"></div>
+<div class="bg-sheen" aria-hidden="true"></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="gradTrend" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="rgba(122,155,240,.45)"/><stop offset="100%" stop-color="rgba(122,155,240,0)"/>
+  </linearGradient>
+</defs></svg>
+<div class="shell">
+
+  <div class="floatbar" id="floatbar">
+    <span class="mark">DS</span>
+    <span class="ftitle">DSH Web Route</span>
+    <span class="fstat hide-sm"><span class="dot" id="fb-dot"></span><b id="fb-hosts">0</b> 台在线</span>
+    <span class="fstat hide-sm"><b id="fb-ports">0</b> 个转发端口</span>
+    <span class="fstat hide-sm"><b id="fb-sess">0</b> 个会话</span>
+    <div class="spacer"></div>
+    <button class="gbtn" onclick="openSettings()" title="设置" aria-label="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 0 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 0 1 0-4 1.7 1.7 0 0 0 1.4-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 0 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 20.6 11a2 2 0 0 1 0 4z"/></svg>
+    </button>
+  </div>
+
+  <section class="hero">
+    <div class="hero-title-wrap" id="hero-title-wrap">
+      <h1 id="hero-title" class="sr-only">DSH WEB ROUTE</h1>
+      <canvas id="title-particles" aria-hidden="true"></canvas>
+    </div>
+    <p class="lede">自动发现宿主机与 WSL 里正在连接的机器，为每台运行中的 dsh web 建立并保活本地转发。</p>
+  </section>
+
+  <section class="window">
+    <div class="win-bar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="win-title">dsh-route — 远端 dsh web</div>
+      <button class="win-gear" onclick="openSettings()" title="设置" aria-label="设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 0 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 0 1 0-4 1.7 1.7 0 0 0 1.4-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 0 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 20.6 11a2 2 0 0 1 0 4z"/></svg>
+      </button>
+    </div>
+    <div class="win-body">
+      <aside class="sidebar">
+        <span class="side-label">当前连接</span>
+        <div id="hosts"></div>
+        <div class="side-foot">
+          <span><b class="mono" id="side-count">0</b> 台在线</span>
+          <span><b class="mono" id="side-ports">0</b> 个转发端口</span>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="main-head">
+          <span class="main-title">最近会话</span>
+          <span class="tag" id="sess-summary">—</span>
+          <div class="spacer"></div>
+          <span class="tag" id="tag-scan">上次扫描 —</span>
+        </div>
+        <div id="sessions"><div class="empty">读取会话 …</div></div>
+      </main>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <div class="section-eyebrow">Route Console</div>
+        <h2 class="section-title">路由台</h2>
+      </div>
+      <div class="spacer"></div>
+      <span class="section-hint" id="section-hint">每 30 秒刷新</span>
+    </div>
+    <div class="grid">
+      <section class="card c-balance">
+        <div class="card-head"><h3>DeepSeek 余额</h3><span class="tag" id="bal-at">—</span></div>
+        <div id="balance"><div class="hint">读取中 …</div></div>
+      </section>
+      <section class="card c-usage">
+        <div class="card-head"><h3>近期使用</h3><span class="tag">近 7 天</span></div>
+        <div id="usage"><div class="hint">读取中 …</div></div>
+      </section>
+      <section class="card c-trend">
+        <div class="card-head"><h3>余额走势</h3><span class="tag" id="trend-at">采样中</span></div>
+        <div id="trend"><div class="hint">读取中 …</div></div>
+      </section>
+      <section class="card c-status">
+        <div class="card-head"><h3>API 状态</h3><span class="tag" id="st-at">—</span></div>
+        <div id="status"><div class="hint">读取中 …</div></div>
+      </section>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>dsh-route · 仅监听 127.0.0.1 · 请用 127.0.0.1 打开（远端信任栅栏按 Host 判定）</span>
+    <span id="foot-meta">—</span>
+  </div>
+</div>
+
+<div class="mask" id="mask" onclick="closeSettings()"></div>
+<aside class="settings" id="settings" aria-hidden="true">
+  <div class="row"><h2>设置</h2><div class="spacer" style="flex:1"></div>
+    <button class="icon-btn" onclick="closeSettings()" title="关闭">✕</button></div>
+  <div class="field">
+    <label>DeepSeek API key（用于查询余额 / 调用状态）</label>
+    <input id="key-input" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+  </div>
+  <div class="row">
+    <button class="btn btn-primary" onclick="saveKey()">保存</button>
+    <button class="btn btn-ghost" onclick="clearKey()">清除</button>
+    <button class="btn btn-ghost" onclick="closeSettings()">取消</button>
+  </div>
+  <div class="hint" id="key-state">—</div>
+  <div class="hint">保存位置：<code>~/.config/dsh-route/deepseek.key</code>（权限 600），仅本机可读；页面不会回显明文。</div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pad = n => String(n).padStart(2, "0");
+const ago = ts => { if (!ts) return "—"; const d = Math.floor(Date.now()/1000 - ts);
+  if (d < 5) return "刚刚"; if (d < 60) return d + " 秒前"; if (d < 3600) return Math.floor(d/60) + " 分钟前";
+  if (d < 86400) return Math.floor(d/3600) + " 小时前"; return Math.floor(d/86400) + " 天前"; };
+const dur = s => { if (s == null) return "—"; if (s < 60) return s + "秒"; if (s < 3600) return Math.floor(s/60) + "分";
+  return Math.floor(s/3600) + "时" + pad(Math.floor(s%3600/60)) + "分"; };
+const kfmt = n => { n = Number(n || 0); if (n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n/1e6).toFixed(2) + "M"; if (n >= 1e3) return (n/1e3).toFixed(1) + "K"; return String(n); };
+const hhmm = ts => { const d = new Date(ts*1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+
+function onScroll(){
+  const t = $("hero-title-wrap").getBoundingClientRect();
+  $("floatbar").classList.toggle("show", t.bottom < 64);
+}
+window.addEventListener("scroll", () => requestAnimationFrame(onScroll), {passive:true});
+
+function renderHosts(d){
+  const rows = d.rows || [];
+  const totalFwd = rows.reduce((s, r) => s + (r.forwards || []).filter(f => f.forwarded).length, 0);
+  $("side-count").textContent = rows.length;
+  $("side-ports").textContent = totalFwd;
+  $("fb-hosts").textContent = rows.length;
+  $("fb-ports").textContent = totalFwd;
+  $("fb-dot").className = rows.length ? "dot" : "dot warn";
+  $("tag-scan").textContent = "上次扫描 " + ago(d.scanned_at);
+  if (!rows.length){
+    $("hosts").innerHTML = '<div class="empty">还没有检测到运行中的 dsh web。<br>先在宿主机或 WSL 里 ssh 到目标机。</div>';
+    return;
+  }
+  $("hosts").innerHTML = rows.map(r => {
+    const fwds = (r.forwards || []).map(f => {
+      const ms = f.latency_ms == null ? "—" : f.latency_ms + "ms";
+      if (!f.forwarded){
+        return `<span class="fwd" style="opacity:.5" title="该端口有 HTTP 服务但不是 dsh web，未转发">
+          <span class="dot warn"></span><span class="rp">${f.remote_port}</span>非 dsh</span>`;
+      }
+      const open = f.token ? `http://127.0.0.1:${f.local_port}/?token=${f.token}` : `http://127.0.0.1:${f.local_port}/`;
+      const tok = f.token ? '<span class="dot"></span>' : '<span class="dot warn"></span>';
+      return `<a class="fwd" href="${open}" target="_blank">
+        <span class="dot ${f.alive ? "" : "warn pulse"}"></span>
+        <span class="rp">${f.remote_port}</span>→<span class="lp">${f.local_port}</span>
+        ${tok}<span class="ms">${ms}</span></a>`;
+    }).join("");
+    return `<div class="host">
+      <div class="host-name">${esc(r.host)}</div>
+      <div class="host-meta">
+        <span class="tag">${esc(r.source)}</span>
+        <span class="mono">${r.remote_ports.length} 端口</span>
+        <span class="mono">${r.latency_ms == null ? "—" : r.latency_ms + "ms"}</span>
+      </div>
+      <div class="fwds">${fwds}</div>
+    </div>`;
+  }).join("");
+}
+
+const STATUS_TEXT = {running: ["运行中", "green"], blocked: ["等待审批", "amber"], idle: ["已结束", ""], unknown: ["未知", ""]};
+function renderSessions(m, d){
+  const groups = m.sessions || [];
+  const rows = d.rows || [];
+  const total = groups.reduce((s, g) => s + (g.sessions || []).length, 0);
+  const hostLink = host => {
+    const r = rows.find(x => x.host === host);
+    const f = r && (r.forwards || []).find(x => x.forwarded);
+    return f ? (f.token ? `http://127.0.0.1:${f.local_port}/?token=${f.token}` : `http://127.0.0.1:${f.local_port}/`) : null;
+  };
+  $("sess-summary").textContent = total ? `${total} 个会话 · ${groups.length} 台机器` : "—";
+  $("fb-sess").textContent = total;
+  if (!groups.length){
+    $("sessions").innerHTML = rows.length
+      ? '<div class="empty">正在读取各机器的会话 …（目标机 DSH_HOME/sessions 里的会话会自动出现）</div>'
+      : '<div class="empty">当前没有在线目标，连上目标机后这里会显示它们最近的会话、token 用量与运行状态。</div>';
+    return;
+  }
+  const order = groups.slice().sort((a, b) => a.host.localeCompare(b.host));
+  $("sessions").innerHTML = order.map(g => {
+    const link = hostLink(g.host);
+    const body = (g.sessions || []).map(s => {
+      const st = STATUS_TEXT[s.status] || STATUS_TEXT.unknown;
+      const tok = s.tokens || {};
+      const title = s.title || ("session " + s.id);
+      const model = s.model ? `<span class="tag">${esc(s.model)}</span>` : "";
+      return `<div class="sess-row">
+        <div style="min-width:0">
+          <div class="sess-title">${esc(title)}</div>
+          <div class="sess-meta"><span class="mono">${esc(s.id)}</span>${model}
+            <span class="tag ${st[1]}"><span class="dot"></span>${st[0]}</span>
+            <span>${s.steps || 0} 步 · 最近 ${ago(s.last)}</span></div>
+        </div>
+        <div class="sess-right">
+          <div class="sess-tok">${kfmt(tok.total)}<small>in ${kfmt(tok.input)} · out ${kfmt(tok.output)} · cache ${kfmt(tok.cacheRead)}</small></div>
+          ${link ? `<a class="sess-open" href="${link}" target="_blank">打开</a>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+    return `<div class="sess-host">${esc(g.host)}
+      <span style="text-transform:none;letter-spacing:0">${(g.sessions || []).length} 个会话</span></div>${body}`;
+  }).join("");
+}
+
+function renderBalance(m){
+  const b = m.balance || {}, el = $("balance");
+  $("bal-at").textContent = b.checked_at ? ago(b.checked_at) : "—";
+  if (m.key_configured === false){
+    el.innerHTML = `<div class="amount">—<span class="cur">未配置 key</span></div>
+      <div class="stats"><div><span class="k">赠金余额</span><span class="v">—</span></div>
+        <div><span class="k">充值余额</span><span class="v">—</span></div>
+        <div><span class="k">账户可用</span><span class="v">—</span></div></div>
+      <div class="hint">点右上角 ⚙ 填入 DeepSeek API key 即可查询余额。</div>`;
+    return;
+  }
+  if (!b.ok){
+    el.innerHTML = `<div class="amount" style="font-size:26px">查询失败</div>
+      <div class="mini-kv"><span>原因 <b>${esc(b.error || "—")}</b></span></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="amount">${esc(b.total)}<span class="cur">${esc(b.currency)}</span></div>
+    <div class="stats">
+      <div><span class="k">赠金余额</span><span class="v">${esc(b.granted)}</span></div>
+      <div><span class="k">充值余额</span><span class="v">${esc(b.topped_up)}</span></div>
+      <div><span class="k">账户可用</span><span class="v">${b.available ? "是" : "否"}</span></div>
+    </div>
+    <div class="mini-kv">
+      <span>接口延迟 <b>${b.latency_ms} ms</b></span>
+      <span>更新于 <b>${ago(b.checked_at)}</b></span>
+    </div>`;
+}
+
+function renderTrend(m){
+  const hist = (m.balance_history || []).slice(-360);
+  const el = $("trend");
+  if (hist.length < 2){
+    $("trend-at").textContent = hist.length ? "已采样 1 点" : "采样中";
+    el.innerHTML = `<div class="hint">正在记录余额采样（每 ${m.metrics_poll || 30} 秒一次，重启后仍保留）。<br>
+      已经积累 ${hist.length} 个采样点，攒到 2 个点就开始画曲线。</div>`;
+    return;
+  }
+  const vals = hist.map(p => p[1]);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = Math.max(1e-6, hi - lo);
+  const w = 560, h = 150, padL = 4, padR = 4, padT = 12, padB = 22;
+  const x = i => padL + (i / (hist.length - 1)) * (w - padL - padR);
+  const y = v => padT + (1 - (v - lo) / span) * (h - padT - padB);
+  const line = hist.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[1]).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(hist.length-1).toFixed(1)} ${h-padB} L${padL} ${h-padB} Z`;
+  const first = hist[0][1], last = hist[hist.length-1][1], delta = last - first;
+  const deltaTxt = (delta >= 0 ? "+" : "") + delta.toFixed(2);
+  const gridLines = [0, 0.5, 1].map(f => {
+    const yy = padT + f * (h - padT - padB);
+    return `<line class="grid-line" x1="0" y1="${yy.toFixed(1)}" x2="${w}" y2="${yy.toFixed(1)}"/>`;
+  }).join("");
+  $("trend-at").textContent = `${hist.length} 个采样点`;
+  const sparse = hist.length < 4;
+  el.innerHTML = `<div class="mini-kv" style="margin:0 0 4px">
+      <span>当前 <b>${last.toFixed(2)}</b></span>
+      <span>区间变化 <b style="color:${delta >= 0 ? "#9bf0c4" : "#ffd6d6"}">${deltaTxt}</b></span>
+      <span>最高 <b>${hi.toFixed(2)}</b></span>
+      <span>最低 <b>${lo.toFixed(2)}</b></span>
+      ${sparse ? '<span style="color:#ffd894">采样中…</span>' : ""}
+    </div>
+    <svg class="trend" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      ${gridLines}
+      ${sparse ? "" : `<path class="area" d="${area}"/>`}
+      <path class="line" d="${line}"/>
+      <text class="lbl" x="0" y="${h - 5}">${hhmm(hist[0][0])}</text>
+      <text class="lbl" x="${w}" y="${h - 5}" text-anchor="end">${hhmm(hist[hist.length-1][0])}</text>
+    </svg>`;
+}
+
+function renderStatus(m){
+  const st = m.status_page || {}, a = m.api || {}, el = $("status");
+  $("st-at").textContent = st.checked_at ? ago(st.checked_at) : "—";
+  if (!st.ok){
+    // 状态页拉不到：一句话说清（短），能确认 API 直连通就用琥珀色，否则红色
+    const degrade = !!a.ok;
+    el.innerHTML = `<span class="pill-ok ${degrade ? "warn" : "bad"}"><span class="dot ${degrade ? "warn" : "bad"}"></span>状态页不可达</span>
+      <div class="hint" style="margin-top:10px">直连 api.deepseek.com ${degrade ? "正常" : "不通"}（HTTP ${a.status ?? "—"} · ${a.latency_ms ?? "—"} ms）${st.reason ? " · " + esc(st.reason) : ""}</div>
+      ${(a.models || []).length ? `<div class="chips">${a.models.slice(0,4).map(x => `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}`;
+    return;
+  }
+  const comps = (st.components || []).map(c => {
+    const pct = parseFloat(c.uptime) || 0;
+    return `<div class="comp"><span class="nm">${esc(c.name)}</span>
+      <span class="bar-mini"><i style="width:${Math.max(2, pct)}%"></i></span>
+      <span class="up">${esc(c.uptime)}</span></div>`;
+  }).join("");
+  const inc = (st.incidents || []).length
+    ? `<div class="hint" style="color:#ffd894">事件：${st.incidents.map(esc).join(" / ")}</div>`
+    : `<div class="hint">当前没有进行中的事件</div>`;
+  el.innerHTML = `<div class="row" style="gap:12px">
+      <span class="pill-ok${st.healthy ? "" : " bad"}"><span class="dot ${st.healthy ? "" : "bad"}"></span>
+        ${st.healthy ? "所有系统运行正常" : esc(st.overall)}</span>
+      <span class="hint" style="margin:0">本机直连 api.deepseek.com · HTTP ${a.status ?? "—"} · ${a.latency_ms ?? "—"} ms</span>
+    </div>
+    <div class="comps">${comps}</div>${inc}
+    ${(a.models || []).length ? `<div class="chips">${a.models.slice(0,4).map(x => `<span class="chip">${esc(x)}</span>`).join("")}</div>` : ""}`;
+}
+
+function renderUsage(m){
+  const u = m.usage || {}, days = u.days || [];
+  const max = Math.max(1, ...days.map(d => d.count));
+  const today = days.length ? days[days.length-1].date : "";
+  const cols = days.map(d => `<div class="col">
+      <div class="bar ${d.date === today ? "today" : ""}" style="height:${Math.max(4, Math.round(d.count/max*100))}%"
+           data-tip="${d.date} · ${d.count} 个会话"></div><div class="lbl">${esc(d.date.slice(5))}</div></div>`).join("");
+  const src = Object.entries(u.sources || {}).map(([k,v]) => `<span class="chip">${esc(k)} · ${v}</span>`).join("");
+  $("usage").innerHTML = `<div class="row" style="align-items:baseline;gap:10px">
+      <div class="amount" style="font-size:34px;margin:0">${u.total ?? 0}<span class="cur">会话 / ${days.length} 天</span></div>
+      <div class="spacer" style="flex:1"></div>
+      <span class="hint" style="margin:0">最近活动 ${ago(u.last_active)}</span></div>
+    <div class="chart">${cols}</div>
+    ${src ? `<div class="chips">${src}</div>` : ""}`;
+}
+
+function renderFoot(m, d){
+  const rows = d.rows || [];
+  const fwd = rows.reduce((s, r) => s + (r.forwards || []).filter(f => f.forwarded).length, 0);
+  $("section-hint").textContent = `余额 · 余额走势 · 近期使用 · API 状态（每 ${m.metrics_poll || 30} 秒刷新）`;
+  $("foot-meta").textContent = `服务运行 ${dur(m.uptime)} · 扫描 ${m.poll}s · 指标 ${m.metrics_poll || 30}s · ` +
+    `${rows.length} 台 / ${fwd} 端口 · Windows 发现${d.ps_path ? "可用" : "不可用"}`;
+}
+
+/* 设置 */
+function openSettings(){
+  $("mask").classList.add("on"); $("settings").classList.add("on"); $("settings").setAttribute("aria-hidden","false");
+  $("key-input").focus();
+}
+function closeSettings(){
+  $("mask").classList.remove("on"); $("settings").classList.remove("on"); $("settings").setAttribute("aria-hidden","true");
+}
+async function saveKey(){
+  const key = $("key-input").value.trim();
+  if (!key){ $("key-state").textContent = "请输入 key（或点清除）"; return; }
+  const r = await fetch("/api/key", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({key})});
+  const j = await r.json().catch(() => ({}));
+  $("key-state").textContent = j.ok ? "已保存，正在刷新余额 …" : ("保存失败：" + (j.error || r.status));
+  $("key-input").value = ""; lastMetrics = 0; tick();
+}
+async function clearKey(){
+  await fetch("/api/key", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({key:""})});
+  $("key-state").textContent = "已清除 API key"; lastMetrics = 0; tick();
+}
+
+let lastMetrics = 0, cache = null;
+async function tick(){
+  try{
+    const d = await (await fetch("/api/status", {cache:"no-store"})).json();
+    renderHosts(d);
+    if (Date.now()/1000 - lastMetrics > 12 || !cache){
+      cache = await (await fetch("/api/metrics", {cache:"no-store"})).json(); lastMetrics = Date.now()/1000;
+      $("key-state").textContent = cache.key_configured ? "已配置 API key（" + (cache.key_file || "") + "）" : "尚未配置 API key";
+    }
+    const m = cache || {};
+    renderSessions(m, d); renderBalance(m); renderTrend(m); renderUsage(m); renderStatus(m); renderFoot(m, d);
+  }catch(e){}
+  setTimeout(tick, 3000);
+}
+/* ---------- 粒子标题：文字栅格化采样成粒子，鼠标经过被打散后回弹 ---------- */
+(function particles(){
+  const wrap = document.getElementById("hero-title-wrap");
+  const canvas = document.getElementById("title-particles");
+  if (!wrap || !canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext("2d");
+  const TEXT = "DSH WEB ROUTE";
+  const FAMILY = '"DSH Display","DSH Rounded",system-ui,sans-serif';
+  const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const R = 34, R2 = R * R;          // 鼠标影响半径（只影响贴得很近的粒子）
+  const EASE = 0.042;                // 归位速度：指数缓动，越小越慢，且不会过冲/震荡
+  const VDECAY = 0.9;                // 被挤开后的速度衰减
+  const PUSH = 0.6;                  // 挤开力度基准
+  const HOT_DIST = 3.5;              // 偏离目标多少算"被挤开"（用于蓝色高光）
+  const mouse = {x: -9999, y: -9999, active: false};
+  let W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1);
+  let parts = [], raf = 0, running = false, frames = 0, timer = 0, usingTimer = false, armed = false;
+
+  function build(keep){
+    const prev = parts;
+    const rect = wrap.getBoundingClientRect();
+    W = Math.max(300, Math.round(rect.width));
+    H = Math.max(58, Math.round(rect.height));
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const off = document.createElement("canvas");
+    off.width = W; off.height = H;
+    const octx = off.getContext("2d");
+    let size = Math.min(H * 0.9, 110);
+    for (let i = 0; i < 24; i++){                       // 让文字宽度贴近画布宽度
+      octx.font = `600 ${size}px ${FAMILY}`;
+      const w = octx.measureText(TEXT).width;
+      const target = W * 0.965;
+      if (Math.abs(w - target) / target < 0.02) break;
+      size *= Math.min(1.08, Math.max(0.92, target / w));
+    }
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    octx.fillStyle = "#fff";
+    octx.fillText(TEXT, W / 2, H / 2);
+    const data = octx.getImageData(0, 0, W, H).data;
+
+    const stride = W < 700 ? 4 : 3;                   // 采样步长（勿与物理函数 step() 重名）
+    let pts = [];
+    for (let y = 0; y < H; y += stride){
+      for (let x = 0; x < W; x += stride){
+        if (data[(y * W + x) * 4 + 3] > 130) pts.push([x, y]);
+      }
+    }
+    while (pts.length > 4200) pts = pts.filter((_, i) => i % 2 === 0);
+
+    const rnd = Math.random;
+    parts = pts.map(([tx, ty], i) => {
+      const old = keep ? prev[i] : null;
+      // 重建时按下标沿用旧位置；多出来的粒子直接放在目标附近，避免整片变散点
+      const x = old ? old.x : (keep ? tx + (rnd() - 0.5) * 8 : tx + (rnd() - 0.5) * W * 0.7);
+      const y = old ? old.y : (keep ? ty + (rnd() - 0.5) * 8 : ty + (rnd() - 0.5) * H * 1.6);
+      return {
+        tx, ty, x, y, vx: 0, vy: 0,
+        s: stride > 3 ? 1.7 : 1.5, a: 0.5 + rnd() * 0.5, hot: false
+      };
+    });
+    // 重建（字体加载/尺寸变化）后目标点会变，必须再快进若干步把粒子拉回新字形
+    let err = 0;
+    for (let k = 0; k < (keep ? 260 : 80); k++) err = step();
+    if (REDUCED){
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(20,26,46,.85)";
+      for (const p of parts){ p.x = p.tx; p.y = p.ty; ctx.fillRect(p.x, p.y, p.s, p.s); }
+    } else {
+      draw(err);                                       // 重建后立刻重绘，不等下一帧
+    }
+  }
+
+  function step(){
+    let maxd = 0;
+    for (const p of parts){
+      if (mouse.active){
+        const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+        if (d2 < R2 && d2 > 0.4){
+          const d = Math.sqrt(d2);
+          const falloff = 1 - d / R;               // 0（边缘）→ 1（正中心）
+          const force = falloff * falloff * PUSH;  // 二次衰减：越近推得越狠，边缘几乎不动
+          p.vx += (dx / d) * force;
+          p.vy += (dy / d) * force;
+        }
+      }
+      // 归位用指数缓动（一阶），没有弹簧的过冲，所以不会来回震荡
+      p.x += (p.tx - p.x) * EASE + p.vx;
+      p.y += (p.ty - p.y) * EASE + p.vy;
+      p.vx *= VDECAY; p.vy *= VDECAY;
+      const off = Math.abs(p.x - p.tx) + Math.abs(p.y - p.ty);
+      p.hot = off > HOT_DIST;
+      if (off > maxd) maxd = off;
+    }
+    return maxd;                                       // 返回最大偏离，用于判断"是否已完全静止"
+  }
+
+  function draw(err){
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(20,26,46,.82)";             // 归位的大批粒子一次画完
+    for (const p of parts) if (!p.hot) ctx.fillRect(p.x, p.y, p.s, p.s);
+    for (const p of parts){                           // 被打散的少量粒子带蓝色高光
+      if (!p.hot) continue;
+      ctx.fillStyle = `rgba(77,107,254,${p.a})`;
+      ctx.fillRect(p.x, p.y, p.s, p.s);
+    }
+    canvas.dataset.p = String(parts.length);
+    canvas.dataset.err = err.toFixed(2);
+    canvas.dataset.f = String(frames);
+  }
+
+  function schedule(){
+    if (usingTimer) return;
+    raf = requestAnimationFrame(frame);
+  }
+  let lastTs = 0, stillFrames = 0;
+  function frame(ts){
+    frames++;
+    // 固定步长：帧率低时一帧多推几步，动画时长不受帧率影响
+    const dt = lastTs ? Math.min(120, ts - lastTs) : 16;
+    lastTs = ts;
+    const steps = Math.max(1, Math.min(6, Math.round(dt / 16)));
+    let err = 0;
+    for (let i = 0; i < steps; i++) err = step();
+    draw(err);
+    // 完全静止且鼠标不在附近时停帧：不再空转重绘，这是 GPU/CPU 占用的大头
+    if (!mouse.active && err < 0.6){
+      if (++stillFrames > 12){ stop(); return; }
+    } else {
+      stillFrames = 0;
+    }
+    schedule();
+  }
+
+  function start(){
+    if (running || REDUCED) return;
+    running = true; lastTs = 0; stillFrames = 0;
+    if (usingTimer){
+      if (!timer) timer = setInterval(() => { if (running) frame(performance.now()); }, 16);
+      return;
+    }
+    schedule();
+    // 看门狗：无头/后台标签页里 rAF 可能不触发，超过 1 秒没几帧就改用定时器驱动
+    if (!armed){
+      armed = true;
+      setTimeout(() => {
+        if (!window.__dshNoWatchdog && running && frames < 8){
+          usingTimer = true;
+          cancelAnimationFrame(raf);
+          if (!timer) timer = setInterval(() => { if (running) frame(performance.now()); }, 16);
+        }
+      }, 1000);
+    }
+  }
+  function stop(){
+    running = false;
+    cancelAnimationFrame(raf);
+    if (timer){ clearInterval(timer); timer = 0; }     // usingTimer 保持粘性，重启时继续用定时器
+  }
+
+  window.addEventListener("pointermove", e => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+    mouse.active = mouse.y > -R && mouse.y < H + R && mouse.x > -R && mouse.x < W + R;
+    if (mouse.active) start();                        // 停帧状态下鼠标靠近就重新跑
+  }, {passive: true});
+  window.addEventListener("pointerdown", () => { mouse.active = false; }, {passive: true});
+  document.addEventListener("visibilitychange", () => { document.hidden ? stop() : start(); });
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => build(true), 220);
+  });
+
+  if ("IntersectionObserver" in window){
+    new IntersectionObserver(es => { es[0].isIntersecting ? start() : stop(); }, {threshold: 0}).observe(wrap);
+  } else { start(); }
+
+  build();
+  start();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => build(true));  // 字体就绪后按新字形微调
+  // 供自动化截图/调试使用：立即收敛到目标字形
+  window.dshParticles = {
+    settle(iterations){ for (let i = 0; i < (iterations || 400); i++) step(); if (parts.length) frame(performance.now()); },
+    info(){ return {count: parts.length, err: canvas.dataset.err, frames: frames}; }
+  };
+})();
+
+tick(); onScroll();
+if (location.hash === "#settings") openSettings();
+</script>
+</body></html>

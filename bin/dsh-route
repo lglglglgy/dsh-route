@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# dsh-route —— 常驻服务的命令行客户端（Linux · WSL · macOS）
+#
+#   dsh-route                 查看当前发现/转发状态
+#   dsh-route open            打印控制页地址
+#   dsh-route url [host]      打印某台（缺省=列表第一台）可直接打开的 URL
+#   dsh-route refresh         让服务立即重新扫描
+#   dsh-route key             录入/更新 DeepSeek API key（余额面板用，不回显）
+#   dsh-route key-show        看当前 key 概况（只显示前 6 位）
+#   dsh-route key-clear       清除 API key
+#   dsh-route where           看平台、服务类型、路径与端口配置
+#   dsh-route start|stop|restart|enable|disable|log|status   服务控制
+#   dsh-route uninstall [--purge]   卸载（读安装清单，精确删除；--purge 连配置与历史）
+set -uo pipefail
+
+DATA=${DSH_ROUTE_PREFIX:-$HOME/.local/share/dsh-route}
+CONFIG_DIR=${DSH_ROUTE_CONFIG_DIR:-$HOME/.config/dsh-route}
+CONFIG=${DSH_ROUTE_CONFIG:-$CONFIG_DIR/config}
+KEY_FILE=${DSH_ROUTE_KEY_FILE:-$CONFIG_DIR/deepseek.key}
+STATE_DIR=${DSH_ROUTE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dsh-route}
+LOGDIR=$HOME/Library/Logs
+SVC=dsh-route
+LABEL=com.dshroute.agent
+
+CTL=3090
+if [[ -f $CONFIG ]]; then
+  v=$(awk -F= '/^[[:space:]]*CONTROL_PORT/{sub(/#.*/, "", $2); gsub(/[^0-9]/, "", $2); print $2; exit}' "$CONFIG")
+  [[ -n ${v:-} ]] && CTL=$v
+fi
+API="http://127.0.0.1:$CTL"
+
+die() { echo "$*" >&2; exit 1; }
+file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null || echo '?'; }
+# macOS 没有 setsid：用子 shell + nohup 脱离
+detach_start() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup "$@" >/dev/null 2>&1 &
+  else
+    ( nohup "$@" >/dev/null 2>&1 & )
+  fi
+}
+
+# ── 服务托管：systemd --user / systemd 系统 / launchd / 兜底进程 ──
+svc_kind() {
+  if [[ -s "$DATA/.service-kind" ]]; then cat "$DATA/.service-kind"; return; fi
+  case "$(uname -s)" in
+    Darwin) echo launchd; return ;;
+  esac
+  if systemctl --user show-environment >/dev/null 2>&1; then echo systemd
+  elif [[ -f /etc/systemd/system/$SVC.service ]]; then echo systemd-system
+  else echo none; fi
+}
+KIND="$(svc_kind)"
+
+service_active() {
+  case "$KIND" in
+    systemd)        systemctl --user is-active --quiet "$SVC" 2>/dev/null ;;
+    systemd-system) systemctl is-active --quiet "$SVC" 2>/dev/null ;;
+    launchd)        launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 ;;
+    none)
+      local pf="$STATE_DIR/dsh-route.pid"
+      [[ -f $pf ]] && kill -0 "$(cat "$pf")" 2>/dev/null ;;
+  esac
+}
+
+svc_start() {
+  case "$KIND" in
+    systemd)        systemctl --user start "$SVC" ;;
+    systemd-system) sudo systemctl start "$SVC" ;;
+    launchd)
+      if ! launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null; then
+        launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$LABEL.plist" 2>/dev/null \
+          || launchctl load -w "$HOME/Library/LaunchAgents/$LABEL.plist" 2>/dev/null
+      fi ;;
+    none)
+      mkdir -p "$STATE_DIR"
+      detach_start "$DATA/run.sh"
+      sleep 1
+      local pid; pid=$(pgrep -f "$DATA/daemon.py" 2>/dev/null | head -1 || true)
+      [[ -n ${pid:-} ]] && printf '%s\n' "$pid" > "$STATE_DIR/dsh-route.pid" ;;
+  esac
+}
+
+svc_stop() {
+  case "$KIND" in
+    systemd)        systemctl --user stop "$SVC" ;;
+    systemd-system) sudo systemctl stop "$SVC" ;;
+    launchd)        launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl unload "$HOME/Library/LaunchAgents/$LABEL.plist" 2>/dev/null ;;
+    none)
+      local pf="$STATE_DIR/dsh-route.pid"
+      [[ -f $pf ]] && kill "$(cat "$pf")" 2>/dev/null; rm -f "$pf" ;;
+  esac
+}
+
+svc_enable() {
+  case "$KIND" in
+    systemd)        systemctl --user enable --now "$SVC" ;;
+    systemd-system) sudo systemctl enable --now "$SVC" ;;
+    launchd)        svc_start ;;                      # plist 里 RunAtLoad=KeepAlive，加载即自启
+    none)
+      if command -v crontab >/dev/null 2>&1; then
+        ( crontab -l 2>/dev/null | grep -v "$DATA/run.sh" || true; echo "@reboot $DATA/run.sh" ) | crontab - \
+          && echo "已写入 crontab @reboot" || die "crontab 写入失败"
+      else
+        die "没有 crontab：请自行把 $DATA/run.sh 加到登录自启"
+      fi ;;
+  esac
+}
+
+svc_disable() {
+  case "$KIND" in
+    systemd)        systemctl --user disable --now "$SVC" ;;
+    systemd-system) sudo systemctl disable --now "$SVC" ;;
+    launchd)        svc_stop ;;
+    none)
+      if command -v crontab >/dev/null 2>&1; then
+        ( crontab -l 2>/dev/null | grep -v "$DATA/run.sh" || true ) | crontab - && echo "已移除 crontab 自启"
+      fi
+      svc_stop ;;
+  esac
+}
+
+svc_log() {
+  case "$KIND" in
+    systemd)        journalctl --user -u "$SVC" -n 60 --no-pager ;;
+    systemd-system) journalctl -u "$SVC" -n 60 --no-pager ;;
+    launchd)        tail -n 60 "$LOGDIR/dsh-route.log" 2>/dev/null || echo "（暂无日志 $LOGDIR/dsh-route.log）" ;;
+    none)           tail -n 60 "$STATE_DIR/daemon.log" 2>/dev/null || echo "（暂无日志 $STATE_DIR/daemon.log）" ;;
+  esac
+}
+
+require_service() {
+  service_active && return 0
+  echo "服务未运行（$KIND），正在启动 ..." >&2
+  svc_start 2>/dev/null
+  for _ in $(seq 1 10); do service_active && return 0; sleep 1; done
+  die "启动失败（服务类型 $KIND），可看：dsh-route log"
+}
+
+dump_status() {   # 把 API JSON 落到临时文件，避免 heredoc 抢占 stdin
+  local tmp; tmp=$(mktemp)
+  curl -s -m 8 "$API/api/status" >"$tmp"
+  if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; return 1
+  fi
+  printf '%s\n' "$tmp"
+}
+
+show_status() {
+  require_service
+  local tmp; tmp=$(dump_status) || die "服务无响应（dsh-route log）"
+  python3 - "$tmp" <<'PY'
+import json, sys, platform
+d = json.load(open(sys.argv[1]))
+rows = d.get("rows") or []
+pr = d.get("probe") or {}
+print("平台 %s（本地发现：%s，%d 个 ssh 进程%s）  控制页 http://127.0.0.1:%d/"
+      % (pr.get("platform") or platform.system().lower(),
+         pr.get("local") or "-", pr.get("local_count") or 0,
+         ("，Windows 侧：" + pr["windows"]) if pr.get("windows") else "",
+         d["control_port"]))
+print("本地端口从 %d 起    候选远端端口 %s"
+      % (d["base_port"], ",".join(str(p) for p in d.get("candidate_ports") or [])))
+print()
+for r in rows:
+    lat = ("%dms" % r["latency_ms"]) if r.get("latency_ms") is not None else "—"
+    print("%s（%s）  延迟 %s" % (r["host"], r["source"], lat))
+    for f in r.get("forwards") or []:
+        if f.get("forwarded"):
+            url = ("http://127.0.0.1:%d/?token=%s" % (f["local_port"], f["token"])) if f.get("token") \
+                  else ("http://127.0.0.1:%d/  (无 token)" % f["local_port"])
+            print("    远端 %-5d → 本地 %-5d  %s  %s"
+                  % (f["remote_port"], f["local_port"], "隧道正常" if f["alive"] else "重连中", url))
+        else:
+            print("    远端 %-5d 有 HTTP 服务但不是 dsh web，未转发" % f["remote_port"])
+    print()
+if not rows:
+    print("(没有发现正在运行 dsh web 的连接目标 —— 先正常 ssh 到目标机)")
+PY
+  rm -f "$tmp"
+}
+
+get_url() {
+  require_service
+  local tmp; tmp=$(dump_status) || die "服务无响应"
+  python3 - "$tmp" "${1:-}" <<'PY'
+import json, sys
+want = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
+d = json.load(open(sys.argv[1]))
+rows = d.get("rows") or []
+pick = None
+for r in rows:
+    if want and r["host"] == want:
+        pick = r; break
+if pick is None and not want:
+    pick = rows[0] if rows else None
+if pick is None:
+    print("没有匹配的目标%s" % (("：" + want) if want else ""))
+    sys.exit(0)
+f = next((x for x in pick.get("forwards") or [] if x.get("forwarded")), None)
+if not f:
+    print("%s 没有可用的转发端口" % pick["host"]); sys.exit(0)
+print(("http://127.0.0.1:%d/?token=%s" % (f["local_port"], f["token"])) if f.get("token")
+      else ("http://127.0.0.1:%d/" % f["local_port"]))
+PY
+  rm -f "$tmp"
+}
+
+case "${1:-status}" in
+  status | scan | "") show_status ;;
+  open) require_service; echo "http://127.0.0.1:$CTL/" ;;
+  url) get_url "${2:-}" ;;
+  select)
+    die "主口功能已移除：每台机器都独立转发，直接用 dsh-route url <host> 或打开控制页点进去" ;;
+  refresh) require_service; curl -s -m 8 -o /dev/null "$API/refresh"; echo "已触发重新扫描" ;;
+  key)
+    printf '粘贴 DeepSeek API key（不回显，直接回车取消）: ' >&2
+    read -rs key || true
+    echo >&2
+    [[ -n ${key:-} ]] || die "未输入，保持原样"
+    mkdir -p "$CONFIG_DIR"; umask 077
+    printf '%s' "$key" >"$KEY_FILE"
+    printf '已写入 %s（权限 %s）\n' "$KEY_FILE" "$(file_mode "$KEY_FILE")"
+    printf '指标线程会在 30s 内刷新；也可 dsh-route restart 立即生效\n'
+    ;;
+  key-clear) rm -f "$KEY_FILE"; echo "已清除 API key" ;;
+  key-show)
+    if [[ -s $KEY_FILE ]]; then
+      printf '当前 key: %s…（%s 字节，权限 %s）\n' "$(head -c 6 "$KEY_FILE")" "$(wc -c <"$KEY_FILE")" "$(file_mode "$KEY_FILE")"
+    else
+      echo "未配置（dsh-route key 可录入）"
+    fi ;;
+  where)
+    printf '平台: %s\n服务: %s（%s）\n代码: %s\n配置: %s\nkey : %s\n控制页: http://127.0.0.1:%s/\n' \
+      "$(uname -s)$(grep -qi microsoft /proc/version 2>/dev/null && echo '（WSL）')" \
+      "$KIND" "$(service_active && echo 运行中 || echo 未运行)" \
+      "$DATA" "$CONFIG" "$KEY_FILE" "$CTL"
+    [[ -f $CONFIG ]] && grep -E '^[A-Z_]+=' "$CONFIG" | sed 's/^/    /' ;;
+  start) svc_start && echo "已启动（$KIND）" ;;
+  stop) svc_stop && echo "已停止（$KIND）" ;;
+  restart)
+    case "$KIND" in
+      systemd)        systemctl --user restart "$SVC" ;;
+      systemd-system) sudo systemctl restart "$SVC" ;;
+      *) svc_stop; sleep 1; svc_start ;;
+    esac
+    echo "已重启（$KIND）" ;;
+  enable) svc_enable && echo "已设为自启并启动（$KIND）" ;;
+  disable) svc_disable && echo "已取消自启并停止（$KIND）" ;;
+  log) svc_log ;;
+  uninstall|remove)
+    UN="$(cd "$(dirname "$0")" && pwd)/dsh-route-uninstall"
+    [ -x "$UN" ] || die "找不到卸载器：$UN（可手工删 $DATA 与 $CONFIG_DIR）"
+    shift
+    exec "$UN" "$@" ;;
+  -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "未知命令：$1（-h 看用法）" ;;
+esac

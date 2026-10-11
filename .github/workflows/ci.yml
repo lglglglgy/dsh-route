@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux（构建 + 产物自检 + 平台测试）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          uname -a
+          python3 -V
+          bash --version | head -1
+
+      - name: 语法检查
+        run: |
+          set -e
+          for f in install.sh uninstall.sh dist.sh bin/dsh-route bin/dsh-route-uninstall tests/*.sh; do
+            bash -n "$f" || exit 1
+          done
+          sh -n selfextract/stub.sh.in
+          python3 -m py_compile src/daemon.py
+          echo "全部通过"
+
+      - name: shellcheck（只把 error 级当失败）
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S error install.sh uninstall.sh dist.sh \
+                     bin/dsh-route bin/dsh-route-uninstall tests/*.sh
+
+      - name: 构建发布包
+        run: bash dist.sh
+
+      - name: 产物自检（自解压 + 沙箱装/卸）
+        run: bash tests/release-check.sh "dist/dsh-route-$(cat VERSION).run"
+
+      - name: 平台分支测试（macOS 发现桩 / launchd plist / 系统 unit / 无 systemd 兜底）
+        run: bash tests/platform-test.sh
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS（构建 + 产物自检 + 平台测试）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          sw_vers
+          uname -m
+          bash --version | head -1
+          python3 -V || true
+
+      - name: 语法检查 + 构建
+        run: |
+          set -e
+          for f in install.sh uninstall.sh dist.sh bin/dsh-route bin/dsh-route-uninstall tests/*.sh; do
+            bash -n "$f" || exit 1
+          done
+          python3 -m py_compile src/daemon.py
+          bash dist.sh
+
+      - name: 产物自检（BSD sed / shasum / launchd plist 路径都会走到）
+        run: bash tests/release-check.sh "dist/dsh-route-$(cat VERSION).run"
+
+      - name: 平台分支测试
+        run: bash tests/platform-test.sh

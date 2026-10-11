@@ -1,0 +1,142 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# dsh-route @VERSION@ —— 自解压安装器（单文件 .run）
+#
+#   ./dsh-route-@VERSION@.run                      安装 / 升级并启动服务
+#   ./dsh-route-@VERSION@.run --check              只做依赖体检，不安装
+#   ./dsh-route-@VERSION@.run --extract[=DIR]      只解包到 DIR（默认 ./dsh-route-@VERSION@）
+#   ./dsh-route-@VERSION@.run --list               列出包内容
+#   ./dsh-route-@VERSION@.run --noexec             解包后不执行安装（配合 --keep）
+#   ./dsh-route-@VERSION@.run --keep               保留解包目录并打印路径
+#   ./dsh-route-@VERSION@.run --target DIR         指定解包用的临时目录
+#   ./dsh-route-@VERSION@.run --version            打印版本
+#
+#   其余参数原样交给包内 install.sh，例如：
+#     --prefix DIR  --bin-dir DIR  --config-dir DIR  --unit-dir DIR
+#     --no-service  --dry-run  --uninstall  --purge
+#
+# 结构：本文件 = 这段 shell 桩 + 空行标记 + tar.gz 载荷（下方直接拼接）
+#       运行时用 tail 从标记后切出载荷，校验 sha256 后解包执行。
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+SELF_VERSION="@VERSION@"
+PAYLOAD_SHA256="@PAYLOAD_SHA256@"
+TOP_DIR="dsh-route-@VERSION@"
+BUILT_AT="@BUILT_AT@"
+MARKER="__DSH_ROUTE_PAYLOAD_BELOW__"
+
+MODE=install
+TARGET=""
+KEEP=0
+NOEXEC=0
+INSTALL_ARGS=""
+
+usage() { sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'; }
+
+die() { printf '\n✗ %s\n' "$*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)    usage; exit 0 ;;
+    --version)    echo "dsh-route $SELF_VERSION（构建于 $BUILT_AT）"; exit 0 ;;
+    --check)      MODE=check ;;
+    --list)       MODE=list ;;
+    --extract)    MODE=extract ;;
+    --extract=*)  MODE=extract; TARGET="${1#--extract=}" ;;
+    --noexec)     NOEXEC=1 ;;
+    --keep)       KEEP=1 ;;
+    --target|--tmpdir) TARGET="$2"; shift ;;
+    --target=*|--tmpdir=*) TARGET="${1#*=}" ;;
+    --prefix|--bin-dir|--config-dir|--unit-dir)
+                  [ $# -ge 2 ] || die "$1 需要一个参数"
+                  INSTALL_ARGS="$INSTALL_ARGS $1 $2"; shift ;;
+    --no-service|--dry-run|--uninstall|--purge)
+                  INSTALL_ARGS="$INSTALL_ARGS $1" ;;
+    --)           shift; while [ $# -gt 0 ]; do INSTALL_ARGS="$INSTALL_ARGS $1"; shift; done; break ;;
+    *)            die "未知参数：$1（--help 看用法）" ;;
+  esac
+  shift
+done
+
+# 定位自身（支持相对路径调用）
+case "$0" in
+  /*) SELF="$0" ;;
+  *)  SELF="$(pwd)/$0" ;;
+esac
+[ -f "$SELF" ] || die "找不到自身：$SELF"
+
+# 载荷起点 = 标记所在行的下一行
+LINE=$(awk -v m="$MARKER" '$0 == m { print NR + 1; exit }' "$SELF" || true)
+[ -n "${LINE:-}" ] || die "本文件不是完整的自解压包（缺少载荷标记）"
+
+if [ -z "$TARGET" ]; then
+  if [ "$MODE" = extract ]; then TARGET=".";      # 解到当前目录 → ./dsh-route-<ver>/
+  else TARGET=$(mktemp -d "${TMPDIR:-/tmp}/dsh-route.XXXXXX") || die "创建临时目录失败"
+       AUTO_TMP=1; fi
+else
+  AUTO_TMP=0
+fi
+AUTO_TMP="${AUTO_TMP:-0}"
+
+printf '\n▸ dsh-route %s（%s）\n' "$SELF_VERSION" "$BUILT_AT"
+
+# 切出载荷（放临时文件，不污染目标目录）
+PAYLOAD=$(mktemp "${TMPDIR:-/tmp}/dsh-route-payload.XXXXXX") || die "创建临时文件失败"
+trap 'rm -f "$PAYLOAD"' EXIT INT TERM
+mkdir -p "$TARGET" || die "无法创建 $TARGET"
+tail -n +"$LINE" "$SELF" > "$PAYLOAD" || die "提取载荷失败"
+
+# 校验
+if command -v sha256sum >/dev/null 2>&1; then
+  got=$(sha256sum "$PAYLOAD" | awk '{print $1}')
+  if [ "$got" != "$PAYLOAD_SHA256" ]; then
+    die "载荷校验失败（期望 $PAYLOAD_SHA256，实际 $got）—— 文件可能在传输中损坏"
+  fi
+  printf '  载荷校验 sha256 ok\n'
+elif command -v shasum >/dev/null 2>&1; then
+  got=$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')
+  [ "$got" = "$PAYLOAD_SHA256" ] || die "载荷校验失败"
+  printf '  载荷校验 sha256 ok\n'
+else
+  printf '  ! 没有 sha256sum/shasum，跳过载荷校验\n'
+fi
+
+if [ "$MODE" = list ]; then
+  printf '  包内容（%s）：\n' "$TOP_DIR"
+  tar tzf "$PAYLOAD" | sed 's/^/    /'
+  [ "$AUTO_TMP" = 1 ] && rm -rf "$TARGET"
+  exit 0
+fi
+
+tar xzf "$PAYLOAD" -C "$TARGET" || die "解包失败"
+printf '  已解包到 %s\n' "$(cd "$TARGET" && pwd)"
+
+PKG="$TARGET/$TOP_DIR"
+[ -d "$PKG" ] || PKG="$TARGET"
+[ -f "$PKG/install.sh" ] || die "包里没有 install.sh"
+
+case "$MODE" in
+  extract)
+    printf '\n完成：%s\n' "$(cd "$PKG" && pwd)"
+    exit 0 ;;
+  check|install)
+    if [ "$MODE" = check ]; then
+      # 只做依赖体检：用 dry-run + 不装服务，绝不改动系统
+      sh -c "bash '$PKG/install.sh' --dry-run --no-service $INSTALL_ARGS"
+    elif [ "$NOEXEC" = 1 ]; then
+      printf '\n--noexec：已解包，未执行安装。手动安装：bash %s/install.sh\n' "$PKG"
+    else
+      sh -c "bash '$PKG/install.sh' $INSTALL_ARGS"
+    fi
+    ;;
+esac
+
+if [ "$KEEP" = 1 ] || [ "$AUTO_TMP" = 0 ]; then
+  printf '\n解包目录保留在：%s\n' "$PKG"
+else
+  rm -rf "$TARGET"
+fi
+
+exit 0
+__DSH_ROUTE_PAYLOAD_BELOW__

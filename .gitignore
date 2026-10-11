@@ -1,0 +1,11 @@
+# 构建产物
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+
+# 杂项
+.DS_Store
+*.log
