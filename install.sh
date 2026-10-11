@@ -116,10 +116,16 @@ check_env() {
   else
     die "需要 python3 ≥ 3.9"
   fi
+  # 会话解析：主力是"远端解压"（远端跑着 dsh，node/zstd/python 至少有一样），
+  # 本机这三样有任意一个就能兜底。不要求 python 3.14。
   if python3 -c 'from compression import zstd' 2>/dev/null; then
-    say "compression.zstd 可用（能解析远端会话的 token / 运行状态）"
+    say "会话解析：本机 compression.zstd（python ≥3.14）"
+  elif python3 -c 'import zstandard' 2>/dev/null; then
+    say "会话解析：本机 zstandard 模块"
+  elif command -v zstd >/dev/null 2>&1; then
+    say "会话解析：本机 zstd 命令"
   else
-    warn "python3 没有 compression.zstd（一般要 3.14+）→ 会话面板只显示元数据，不显示 token"
+    say "会话解析：由远端完成（远端有 node/zstd/python 即可）；本机没装也无妨"
   fi
   command -v curl >/dev/null || die "缺少 curl"
   command -v ssh  >/dev/null || die "缺少 ssh"

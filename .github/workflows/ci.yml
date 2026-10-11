@@ -35,6 +35,11 @@ jobs:
       - name: 检查 $VAR 紧邻非 ASCII（bash 3.2 + UTF-8 locale 会解析坏）
         run: python3 tests/lint-braces.py .
 
+      - name: 多帧 zstd 回归（dsh 会话文件是多帧追加写的，只解第一帧会丢 98% 数据）
+        run: |
+          sudo apt-get install -y -qq zstd || true
+          python3 tests/zstd-check.py
+
       - name: shellcheck（只把 error 级当失败）
         run: |
           sudo apt-get update -qq

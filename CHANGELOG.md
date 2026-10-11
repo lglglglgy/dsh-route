@@ -1,5 +1,21 @@
 # 变更记录
 
+## 0.1.2
+
+- **不再要求本机 Python 3.14**：会话解析改成两级兜底。优先让**远端**解压
+  （远端 `zstd` 命令 → **dsh 自带的 node**（按帧循环解） → 带 zstd 的 python），
+  远端都不行才取原始文件在**本机**解（`compression.zstd` → `zstandard` → `zstd` → `node`）。
+  本机不想升级解释器就 `pip install zstandard` 或 `brew/apt install zstd` 任选其一。
+- **踩到的坑（已修 + 已加回归测试）**：dsh 的 `session.v4.jsonl.zstd` 是**多帧追加**写的
+  （实测一个 21200 字节的文件里有 26 帧）。node 的 `zstdDecompressSync(buf)` 与 python 的
+  `ZstdDecompressor().decompress(buf)` 都**只解第一帧**——55KB 的会话只得到 185 字节，
+  表现为"会话在但 token/标题全是 0"。现在 node 按帧头魔数 `28 B5 2F FD` 切分后逐帧解，
+  再用"结果是否以换行结尾"做完整性校验、必要时换另一侧再解一遍取更长的。
+  新增 `tests/zstd-check.py`：造 61 帧样本断言完整解出（只解第一帧会少 98%）。
+- **找 dsh web 的 token 不再依赖 tmux**：① dsh web 进程的命令行与环境变量（`/proc`）
+  → ② 各类日志（`~/dsh*.log`、`~/nohup.out`、`$DSH_HOME/**/*.log`、`/tmp/dsh*.log`…）
+  → ③ tmux 面板（装了就顺手捞）→ ④ `ps` 兜底；候选 token 仍会 curl 复验（只有 303 才算数）。
+
 ## 0.1.1
 
 - **修复 macOS 安装失败**（UTF-8 locale + 自带 bash 3.2）：`$VAR` 紧邻中文/全角字符时，

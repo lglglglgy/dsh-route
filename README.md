@@ -42,15 +42,27 @@
 | 依赖 | 用途 | 缺失时 |
 | --- | --- | --- |
 | python3 ≥ 3.9 | 守护进程 | 必需 |
-| python3 ≥ 3.14（`compression.zstd`） | 解压远端会话文件，读出 token 与运行状态 | 会话面板只显示元数据 |
+| 会话解析：**远端**的 `zstd` / **dsh 自带的 node**（逐帧解）/ 带 zstd 的 python 任一 | 解开 `session.v4.jsonl.zstd`，读出 token 与运行状态 | 会话面板只显示元数据 |
+| 会话解析：本机的 `compression.zstd`(3.14+)/`zstandard`/`zstd`/`node` 任一 | 远端都解不开时在本机兜底 | 同上（**不要求本机装 3.14**） |
 | curl / ssh | 探测、隧道 | 必需（macOS 自带） |
 | 服务管理器：`systemd --user` / `launchd` | 常驻与自启 | 自动退化为后台进程 + `crontab @reboot` |
 | WSL：Windows PowerShell | 发现宿主机侧的 ssh 目标 | 宿主目标发现不到（WSL 内 ssh 仍可） |
 | WSL：`/etc/wsl.conf` 里 `systemd=true` | `systemctl --user` | 退化为后台进程 |
-| 远端有 tmux | 从 tmux 面板里抓 dsh web 的 token | 页面会显示"无 token"，仍可手动打开 |
 
-macOS 上装 Python 3.14（想要会话 token 解析）可以用 Homebrew：`brew install python@3.14`；
-不装也能跑，只是会话卡片不显示 token 数。
+**会话解析是两级兜底**：优先让**远端**解压（远端跑着 dsh，所以 dsh 自带的 node 必然在；
+`zstd` 命令和带 zstd 的 python 也认），远端都不行才取原始文件在**本机**解
+（`compression.zstd` → `zstandard` → `zstd` 命令 → `node`）。所以本机不需要 Python 3.14；
+想在本机兜底又不想升级解释器，`pip install zstandard` 或 `brew/apt install zstd` 任选其一即可。
+当前走的是哪条路，`dsh-route status` 的 `probe.zstd` 以及每个会话的 `via` 字段都会显示。
+
+> ⚠️ dsh 的会话文件是**多帧** zstd（一个 21KB 文件里 26 帧）。node 的 `zstdDecompressSync(buf)` 和
+> python 的 `ZstdDecompressor().decompress(buf)` **只解第一帧**（55KB 的会话只得到 185 字节，
+> 表现为"会话在但 token 全是 0"）。本项目按帧头魔数切分后逐帧解，并用"结果是否以换行结尾"做完整性校验，
+> 必要时换另一侧再解一遍取更长的。`tests/zstd-check.py` 专门守这个回归。
+
+**找 dsh web 的 token 也不依赖 tmux**：顺序是 ① 运行中的 dsh web 进程的命令行与环境变量（`/proc`）→
+② 各类日志文件（dsh web 的启动输出里带 URL）→ ③ tmux 面板（装了就顺手捞，没装也照样找得到）→
+④ `ps` 兜底。找到的候选还会真的 curl 一遍（只有返回 303 的才算数），所以不会拿错 token。
 
 ## 安装
 

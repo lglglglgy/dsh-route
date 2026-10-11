@@ -159,8 +159,9 @@ print("平台 %s（本地发现：%s，%d 个 ssh 进程%s）  控制页 http://
          pr.get("local") or "-", pr.get("local_count") or 0,
          ("，Windows 侧：" + pr["windows"]) if pr.get("windows") else "",
          d["control_port"]))
-print("本地端口从 %d 起    候选远端端口 %s"
-      % (d["base_port"], ",".join(str(p) for p in d.get("candidate_ports") or [])))
+print("本地端口从 %d 起    候选远端端口 %s    会话解压：%s"
+      % (d["base_port"], ",".join(str(p) for p in d.get("candidate_ports") or []),
+         pr.get("zstd") or "远端"))
 print()
 for r in rows:
     lat = ("%dms" % r["latency_ms"]) if r.get("latency_ms") is not None else "—"

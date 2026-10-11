@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import glob
 import html as html_mod
+import io
 import json
 import os
 import re
@@ -32,9 +33,78 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 try:
-    from compression import zstd as _zstd
+    from compression import zstd as _zstd          # python ≥ 3.14
 except Exception:
     _zstd = None
+try:
+    import zstandard as _zstandard                  # pip install zstandard（3.8+ 都能用）
+except Exception:
+    _zstandard = None
+
+
+_ZSTD_NODE_JS = (
+    'const fs=require("fs"),z=require("zlib");'
+    'const b=fs.readFileSync(%s);'
+    'const M=Buffer.from([0x28,0xb5,0x2f,0xfd]);'          # zstd 帧魔数
+    'let s=[],i=0;while((i=b.indexOf(M,i))!==-1){s.push(i);i+=4}s.push(b.length);'
+    'let o=[],p=null;'
+    'for(let k=0;k<s.length-1;k++){'
+    'const c=p?Buffer.concat([p,b.subarray(s[k],s[k+1])]):b.subarray(s[k],s[k+1]);'
+    'try{o.push(z.zstdDecompressSync(c));p=null}catch(e){p=c}}'   # 解不开就和下一帧合并再试
+    'process.stdout.write(Buffer.concat(o))')
+
+
+def zstd_backend() -> str:
+    """本机可用的 zstd 解压后端（用于状态展示；远端解压是主力）。"""
+    if _zstd is not None:
+        return "python compression.zstd"
+    if _zstandard is not None:
+        return "python zstandard"
+    for name in ("zstd", "zstdcat", "unzstd"):
+        if shutil.which(name):
+            return "%s 命令" % name
+    if shutil.which("node"):
+        return "node（逐帧）"
+    return "无（靠远端解压）"
+
+
+def local_zstd_decompress(data: bytes) -> bytes | None:
+    """本机解压，返回**完整**内容。会话文件是多帧追加写的，必须解所有帧：
+    compression.zstd(≥3.14) → zstandard → zstd 命令 → node（逐帧循环）。
+
+    注意：node 的 zstdDecompressSync 和 python 的 ZstdDecompressor().decompress()
+    默认只解第一帧（实测 55KB 的会话只得到 185 字节），所以 node 必须按帧循环解。
+    """
+    if _zstd is not None:
+        try:
+            return _zstd.decompress(data)          # 模块级函数：处理多帧
+        except Exception:
+            pass
+    if _zstandard is not None:
+        try:
+            return _zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read()
+        except Exception:
+            pass
+    for name in ("zstd", "zstdcat", "unzstd"):
+        exe = shutil.which(name)
+        if not exe:
+            continue
+        try:
+            proc = subprocess.run([exe, "-dcq"], input=data, capture_output=True, timeout=30)
+            if proc.returncode == 0 and proc.stdout:   # zstd 命令默认解所有帧
+                return proc.stdout
+        except Exception:
+            continue
+    exe = shutil.which("node")
+    if exe:
+        try:
+            proc = subprocess.run([exe, "-e", _ZSTD_NODE_JS % "0"], input=data,
+                                  capture_output=True, timeout=60)
+            if proc.returncode == 0 and proc.stdout:
+                return proc.stdout
+        except Exception:
+            pass
+    return None
 
 HOME = Path.home()
 RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "dsh-route"
@@ -96,12 +166,30 @@ rm -f "$tmp" 2>/dev/null
 '''
 
 TOKEN_SCRIPT = r'''
-{
-  if command -v tmux >/dev/null 2>&1; then
-    tmux ls -F '#{session_name}' 2>/dev/null | while read -r s; do tmux capture-pane -p -J -S -8000 -t "$s" 2>/dev/null; done
-  fi
-  for f in "$HOME"/dsh-web*.log "$HOME"/dsh*.log "$HOME"/.dsh/logs/*; do [ -f "$f" ] && tail -c 20000 "$f"; done
-} 2>/dev/null
+# 1) 正在运行的 dsh web 进程：命令行 + 环境变量（不依赖 tmux）
+if [ -d /proc ]; then
+  for p in /proc/[0-9]*; do
+    [ -r "$p/cmdline" ] || continue
+    c=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+    case "$c" in
+      *dsh*web*|*web*dsh*) printf '%s\n' "$c"
+                           tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -i token || true ;;
+    esac
+  done
+fi
+# 2) 日志：dsh web 的启动输出（URL 里就带 token）
+for f in "$HOME"/dsh-web*.log "$HOME"/dsh*.log "$HOME"/nohup.out "$HOME"/.dsh/logs/* \
+         "${DSH_HOME:-}"/logs/* "${DSH_HOME:-}"/*.log /tmp/dsh*.log /tmp/dsh-web*; do
+  [ -f "$f" ] && tail -c 200000 "$f" 2>/dev/null
+done
+# 3) tmux（装了就顺手捞一下，没装也照样能找到）
+if command -v tmux >/dev/null 2>&1; then
+  tmux ls -F '#{session_name}' 2>/dev/null | while read -r s; do
+    tmux capture-pane -p -J -S -8000 -t "$s" 2>/dev/null
+  done
+fi
+# 4) 兜底：ps 带参数（macOS 上没有 /proc）
+ps -Ao args= 2>/dev/null | grep -i dsh | grep -i web || true
 '''
 
 USAGE_SCRIPT = r'''
@@ -120,6 +208,65 @@ for base in "${DSH_HOME:-}" "$HOME/dsh/home" "/gaojiawei/lgy/software/dsh/home" 
 done
 [ -n "$root" ] || exit 0
 find "$root" -name 'session.v4.jsonl.zstd' -printf '%T@ %s %p\n' 2>/dev/null | sort -rn | head -"${1:-3}"
+'''
+
+# 让"读会话"在远端完成最省事：远端有 zstd 命令 / node（dsh 自带）/(带 zstd 的) python 都行。
+# ⚠️ 会话文件是多帧追加写的（实测 26 帧），node 的 zstdDecompressSync 只解第一帧
+#    （55KB 的会话只得到 185 字节），所以 node 必须按帧头魔数切分后逐帧解。
+SESSION_READ_SCRIPT = r'''
+p="$1"
+[ -f "$p" ] || exit 2
+if base64 --help 2>&1 | grep -q -- '-w'; then B64='base64 -w0'; else B64='base64'; fi
+enc() { $B64 | tr -d '\n'; }
+plain="${p%.zstd}"
+[ -f "$plain" ] && { enc < "$plain"; exit 0; }
+
+find_node() {
+  if [ -n "${NODE_BIN:-}" ] && [ -x "$NODE_BIN" ]; then printf '%s' "$NODE_BIN"; return 0; fi
+  n=$(command -v node 2>/dev/null) && { printf '%s' "$n"; return 0; }
+  # dsh 自带的 node：DSH_HOME 的上一级 node/bin/node（实测 /gaojiawei/lgy/software/dsh/node/bin/node）
+  for base in "${DSH_HOME:-}" "$HOME/dsh/home" "/gaojiawei/lgy/software/dsh/home" "$HOME/software/dsh/home" "$HOME/.dsh"; do
+    [ -n "$base" ] || continue
+    top="${base%/home}"
+    for cand in "$top/node/bin/node" "$top/bin/node" "$top/../node/bin/node" "$base/node/bin/node"; do
+      [ -x "$cand" ] && { printf '%s' "$cand"; return 0; }
+    done
+  done
+  for cand in "$HOME"/.nvm/versions/node/*/bin/node /usr/local/bin/node /usr/bin/node /opt/*/bin/node \
+              "$HOME"/.volta/bin/node "$HOME"/.local/share/fnm/node-versions/*/installation/bin/node \
+              "$HOME"/.vscode-server/cli/servers/*/server/node "$HOME"/.local/bin/node; do
+    [ -x "$cand" ] && { printf '%s' "$cand"; return 0; }
+  done
+  return 1
+}
+
+if command -v zstd >/dev/null 2>&1; then zstd -dcq -- "$p" 2>/dev/null | enc && exit 0; fi
+if N=$(find_node); then
+  out=$("$N" -e 'const fs=require("fs"),z=require("zlib");const b=fs.readFileSync(process.argv[1]);
+const M=Buffer.from([0x28,0xb5,0x2f,0xfd]);let s=[],i=0;
+while((i=b.indexOf(M,i))!==-1){s.push(i);i+=4}s.push(b.length);
+let o=[],p=null;for(let k=0;k<s.length-1;k++){
+const c=p?Buffer.concat([p,b.subarray(s[k],s[k+1])]):b.subarray(s[k],s[k+1]);
+try{o.push(z.zstdDecompressSync(c));p=null}catch(e){p=c}}
+process.stdout.write(Buffer.concat(o).toString("base64"))' "$p" 2>/dev/null)
+  [ -n "$out" ] && { printf '%s' "$out"; exit 0; }
+fi
+for py in python3 python; do
+  command -v "$py" >/dev/null 2>&1 || continue
+  "$py" -c 'import base64,io,sys
+data=open(sys.argv[1],"rb").read()
+try:
+    from compression import zstd as Z
+    raw=Z.decompress(data)                       # 模块级函数：多帧
+except Exception:
+    try:
+        import zstandard as Z
+        raw=Z.ZstdDecompressor().stream_reader(io.BytesIO(data)).read()   # 多帧
+    except Exception:
+        raise SystemExit(4)
+sys.stdout.write(base64.b64encode(raw).decode())' "$p" 2>/dev/null && exit 0
+done
+exit 5
 '''
 
 TAKES_VALUE = {"-b", "-c", "-D", "-e", "-F", "-i", "-J", "-L", "-l", "-m",
@@ -392,6 +539,7 @@ def discover(cfg: dict[str, object]) -> tuple[list[tuple[str, str]], bool]:
         "local": "ps" if PLATFORM == "macos" else "/proc",
         "local_count": len(local_lines),
         "windows": (find_powershell(cfg) if PLATFORM == "wsl" else None) or "",
+        "zstd": zstd_backend(),
         "reliable": reliable,
         "at": time.time(),
     }
@@ -537,15 +685,37 @@ def collect_sessions(host: str) -> list[dict]:
                 "mtime": mtime, "size_bytes": size, "title": "", "model": "", "status": "unknown",
                 "tokens": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
                 "steps": 0, "last": mtime}
-        if _zstd is not None and size <= 8_000_000:
-            fetch = "base64 -w0 < \"$1\""
-            _rc, b64 = ssh_run(host, fetch, ["--", path], timeout=40)
-            try:
-                raw = _zstd.decompress(base64.b64decode("".join(b64.split())))
+        if size <= 8_000_000:
+            raw: bytes | None = None
+            via = ""
+            # 首选：让远端解压（远端有 zstd 命令或带 zstd 的 python 就行）
+            _rc, b64 = ssh_run(host, SESSION_READ_SCRIPT, ["--", path], timeout=40)
+            body = "".join(b64.split())
+            if body:
+                try:
+                    raw = base64.b64decode(body)
+                    via = "远端"
+                except Exception:
+                    raw = None
+            # 会话文件是多帧追加写的：个别解码器只给第一帧（实测 185B vs 全量 55KB），
+            # 所以结果不像"完整一行"时，本机再解一遍，取更长的那个。
+            if raw is None or not raw.endswith(b"\n"):
+                fetch = 'base64 -w0 < "$1" 2>/dev/null || base64 < "$1" | tr -d "\\n"'
+                _rc2, raw_b64 = ssh_run(host, fetch, ["--", path], timeout=40)
+                blob = "".join(raw_b64.split())
+                if blob:
+                    try:
+                        alt = local_zstd_decompress(base64.b64decode(blob))
+                    except Exception:
+                        alt = None
+                    if alt and (raw is None or len(alt) > len(raw)):
+                        raw, via = alt, "本机"
+            if raw:
                 item.update(parse_session(raw))
                 item["parsed"] = True
-            except Exception as exc:
-                item["error"] = str(exc)[:80]
+                item["via"] = via
+            else:
+                item["error"] = "会话文件解不开（远端/本机都缺 zstd：装个 zstd 命令行最省事）"
         sessions.append(item)
     # 空结果只短缓存，避免"启动时隧道还没建好"把空结果锁死 45 秒
     SESSION_CACHE[host] = (now, int(CONFIG["SESSION_POLL"]) if sessions else 8, sessions)
